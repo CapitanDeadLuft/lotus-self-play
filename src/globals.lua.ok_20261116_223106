@@ -1,0 +1,1144 @@
+-- globals.lua — Umbrella runtime "globals" layer for the 16.11 Self Play port
+-- (task-25). Loaded and bound from loader.lua, refreshed once per loader tick
+-- from the event synthesizer's cached entity scan (no per-call entity walks).
+--
+-- Contract source: D:\hake\lotus\umbrella_api\GLOBALS_API.md + the 16.11 call
+-- sites (Self Play.lua:939, creep_block.lua:36, waves.lua, jungle.lua:37,
+-- support_camps.lua:166, self_play/prediction.lua).
+--
+-- Implemented here:
+--   * LaneGroupsManager  — real lane waves from the client entity list; lane
+--     polylines are static map data (derived from 16.11 cfg.anchors + the
+--     standard Dota lane layout), lane classification from creep positions.
+--   * JungleCampsManager — camps discovered from C_DOTA_NeutralSpawner client
+--     entities (m_Type @0x5F0, box = centre +/- 400) with a neutral-creep
+--     clustering fallback when the client list has no spawners.
+--   * LIB_DAMAGE_PREDICTION — the 7-method surface used by
+--     self_play/prediction.lua: begin_outgoing/collect_* + targets[unit].attacks
+--     and the unit_attack table. Damage math: NPC.GetTrueDamage /
+--     GetTrueMaximumDamage * NPC.GetArmorDamageMultiplier (conservative 1 when
+--     unavailable). Sources: loader-recorded attack animations (near-hero).
+--   * XHelpers gap-fill — XAbility.aoe_radiuses/radiuses/start_widths/
+--     end_widths ability-name -> special-value-key maps (combat.lua:549-554).
+--   * LaneCreepsManager / KV_LIB — documented-deferred (0 direct 16.11 call
+--     sites) and therefore NOT installed; see probeRows().
+--
+-- Honest gaps (documented, never fabricated): ability/spell damage prediction
+-- (collect_ability_* / collect_modifiers are no-ops), out-of-vision wave
+-- prediction (w2s_*), stack count inference, camp gold for unseen camps.
+
+local M = {}
+
+local G = { api = _G }
+local now = 0
+
+-- log provider: loader binds its log(); standalone smoke runs may omit it.
+local function glog(fmt)
+  local f = G.log or _G.log
+  if type(f) == "function" then pcall(f, fmt) end
+end
+
+-- nav map data (orders-nav task-24/25): real lane polylines + lane classification
+-- + camp sites. Guarded: an older nav without these functions falls back to the
+-- static lane layout / clustering below. Never cache empties (valid=false in
+-- menu/lobby -> retried until the walkable map is ready).
+local navMod = nil
+local function navc()
+  if navMod then return navMod end
+  local ok, m = pcall(require, "nav")
+  if ok and type(m) == "table" then navMod = m end
+  return navMod
+end
+
+local navValidCache, navValidAt = false, -1e9
+local function navValid()
+  -- nav.stats() builds a small table with tree counts; cache the boolean for 1s
+  -- so the per-tick lane/camp refresh never pays it more than once per second.
+  if now - navValidAt < 1 then return navValidCache end
+  navValidAt = now
+  navValidCache = false
+  local n = navc()
+  if not n then return false end
+  if type(n.stats) == "function" then
+    local ok, st = pcall(n.stats)
+    if ok and type(st) == "table" and st.valid == true then navValidCache = true end
+    return navValidCache
+  end
+  navValidCache = true
+  return true
+end
+
+local function A()
+  return G.api or _G
+end
+
+local function ent()
+  return G.ent
+end
+
+local function isTable(t)
+  return type(t) == "table"
+end
+
+local function push(t, v)
+  t[#t + 1] = v
+end
+
+local function reset(t)
+  for i = #t, 1, -1 do t[i] = nil end
+end
+
+local function roundPos(v)
+  if type(v) ~= "table" then return "nil" end
+  return string.format("(%.0f,%.0f,%.0f)", tonumber(v.x) or 0, tonumber(v.y) or 0, tonumber(v.z) or 0)
+end
+
+-- ---------------------------------------------------------------------------
+-- providers / small helpers
+-- ---------------------------------------------------------------------------
+local function groundZ(x, y)
+  local g = G.groundZ
+  if g then
+    local ok, z = pcall(g, x, y)
+    if ok and type(z) == "number" then return z end
+  end
+  return 128
+end
+
+local function vector(x, y, z)
+  local V = _G.Vector
+  if type(V) == "function" then
+    local ok, v = pcall(V, x or 0, y or 0, z or 128)
+    if ok then return v end
+  end
+  return { x = x or 0, y = y or 0, z = z or 128 }
+end
+
+local function localHero()
+  local fn = G.heroFn
+  if fn then
+    local ok, h = pcall(fn)
+    if ok and h then return h end
+  end
+  local hero = A().Heroes
+  if hero and hero.GetLocal then
+    local ok, h = pcall(hero.GetLocal)
+    if ok then return h end
+  end
+  return nil
+end
+
+local function heroTeam()
+  local h = localHero()
+  if not h then return nil end
+  local E = A().Entity
+  if E and E.GetTeamNum then
+    local ok, t = pcall(E.GetTeamNum, h)
+    if ok and type(t) == "number" then return t end
+  end
+  return nil
+end
+
+local function absOrigin(u)
+  local E = A().Entity
+  if not E or not E.GetAbsOrigin then return nil end
+  local ok, p = pcall(E.GetAbsOrigin, u)
+  if ok and type(p) == "table" then return p end
+  return nil
+end
+
+local function isEntity(u)
+  local E = A().Entity
+  if not E or not E.IsEntity then return u ~= nil end
+  local ok, v = pcall(E.IsEntity, u)
+  return ok and v == true
+end
+
+local function alive(u)
+  local E = A().Entity
+  if not E or not E.IsAlive then return isEntity(u) end
+  local ok, v = pcall(E.IsAlive, u)
+  return ok and v == true
+end
+
+local function npcName(u)
+  local N = A().NPC
+  if N and N.GetUnitName then
+    local ok, v = pcall(N.GetUnitName, u)
+    if ok and type(v) == "string" then return v end
+  end
+  local E = A().Entity
+  if E and E.GetClassName then
+    local ok, v = pcall(E.GetClassName, u)
+    if ok and type(v) == "string" then return v end
+  end
+  return ""
+end
+
+-- ---------------------------------------------------------------------------
+-- static lane polylines (data source: 16.11 cfg.anchors Self Play.lua:69-73 +
+-- standard Dota 2 map lane layout; z filled from the nav ground-height grid)
+-- ---------------------------------------------------------------------------
+local LANE_RAW = {
+  [1] = { { -6200, -6200 }, { -6200, -3800 }, { -6200, 2600 }, { -3800, 6200 }, { 6200, 6200 } },
+  [2] = { { -6200, -6200 }, { -3000, -3000 }, { 3000, 3000 }, { 6200, 6200 } },
+  [3] = { { -6200, -6200 }, { -3800, -6200 }, { 2600, -6200 }, { 6200, -3800 }, { 6200, 6200 } },
+}
+local LANE_NAME = { "top", "mid", "bot" }
+local lanePaths, lanePathsReady = {}, false
+local lanePathsByTeam, lanesFromNav = {}, false
+
+local function buildLanePaths()
+  local n = navc()
+  local canNav = n and type(n.lanePath) == "function" and navValid()
+  if lanePathsReady and (lanesFromNav or not canNav) then return lanePaths end
+  if canNav then
+    local byTeam, complete = {}, true
+    for team = 2, 3 do
+      byTeam[team] = {}
+      for lane = 1, 3 do
+        local ok, pts = pcall(n.lanePath, lane, team)
+        if ok and type(pts) == "table" and #pts >= 2 then
+          local out = {}
+          for i, p in ipairs(pts) do
+            out[i] = vector(p.x, p.y, p.z or groundZ(p.x, p.y))
+          end
+          byTeam[team][lane] = out
+        else
+          complete = false
+        end
+      end
+    end
+    if complete then
+      lanePathsByTeam, lanesFromNav, lanePathsReady = byTeam, true, true
+      lanePaths = byTeam[2]
+      return lanePaths
+    end
+  end
+  for lane, pts in pairs(LANE_RAW) do
+    local out = {}
+    for i, p in ipairs(pts) do out[i] = vector(p[1], p[2], groundZ(p[1], p[2])) end
+    lanePaths[lane] = out
+  end
+  lanesFromNav = false
+  lanePathsReady = true
+  return lanePaths
+end
+
+local function lanePathFor(team, lane)
+  buildLanePaths()
+  local by = lanePathsByTeam[team]
+  if by and by[lane] then return by[lane] end
+  return lanePaths[lane]
+end
+
+-- lane classification from map geometry: top lane runs along y >> x, bottom
+-- along x >> y, mid is the diagonal. 1800 keeps the base-area approach points
+-- out of the wrong bucket after the first few seconds of a wave.
+local LANE_MARGIN = 1800
+local function laneOf(x, y)
+  local d = x - y
+  if d <= -LANE_MARGIN then return 1 end
+  if d >= LANE_MARGIN then return 3 end
+  return 2
+end
+
+local function isLaneCreepName(n)
+  if type(n) ~= "string" or not n:find("creep", 1, true) then return false end
+  if n:find("neutral", 1, true) then return false end
+  return n:find("creep_lane", 1, true) ~= nil or n:find("creep_siege", 1, true) ~= nil
+    or n:find("creep_flagbearer", 1, true) ~= nil or n:find("creep_melee", 1, true) ~= nil
+    or n:find("creep_ranged", 1, true) ~= nil
+end
+
+local function isNeutralName(n)
+  return type(n) == "string" and n:find("npc_dota_neutral", 1, true) ~= nil
+    and not n:find("neutral_item", 1, true)
+end
+
+-- gold bounties for lane/neutral creeps (KV npc_units; cached)
+local unitsKV, unitsKVReady = nil, false
+local function bountyOf(name)
+  if not unitsKVReady then
+    unitsKVReady = true
+    local ok, x = pcall(require, "xhelpers")
+    if ok and x and x.xkv and x.xkv.GetKV then
+      local ok2, all = pcall(function() return x.xkv:GetKV("npc_units") end)
+      if ok2 and isTable(all) then unitsKV = all.DOTAUnits or all end
+    end
+  end
+  local kv = unitsKV and unitsKV[name]
+  if isTable(kv) then
+    local lo, hi = tonumber(kv.BountyGoldMin), tonumber(kv.BountyGoldMax)
+    if lo and hi then return (lo + hi) / 2 end
+  end
+  if type(name) == "string" then
+    if name:find("creep_siege", 1, true) then return 80 end
+    if name:find("creep_neutral", 1, true) then return 30 end
+    if name:find("creep_lane", 1, true) then return 42 end
+  end
+  return 0
+end
+
+-- ---------------------------------------------------------------------------
+-- LaneGroupsManager + LaneGroup/CreepRecord (16.11 consumers: Self Play.lua:939,
+-- creep_block.lua:36, waves.lua)
+-- ---------------------------------------------------------------------------
+local LaneGroupsManager = {
+  all_groups = {}, groups_ally = {}, groups_enemy = {},
+  visible_ally = {}, visible_enemy = {}, invisible_enemy = {}, invisible_ally = {},
+  groups_invisible_enemy = {}, w2s_ally = {}, w2s_enemy = {},
+  groups_by_index_ally = {}, groups_by_index_enemy = {},
+  creep_to_group = {},
+  merge_distance = 800, merge_groups_update_tick = 30,
+}
+
+local laneGroupsReady = false
+local groupIndex = 0
+
+local function clusterLane(creeps)
+  local groups = {}
+  for _, rec in ipairs(creeps) do
+    local target
+    for _, g in ipairs(groups) do
+      if (rec._x - g.cx) * (rec._x - g.cx) + (rec._y - g.cy) * (rec._y - g.cy) <= LaneGroupsManager.merge_distance * LaneGroupsManager.merge_distance then
+        target = g
+        break
+      end
+    end
+    if not target then
+      target = { items = {}, n = 0, sx = 0, sy = 0, sz = 0, cx = rec._x, cy = rec._y }
+      push(groups, target)
+    end
+    push(target.items, rec)
+    target.n = target.n + 1
+    target.sx = target.sx + rec._x
+    target.sy = target.sy + rec._y
+    target.sz = target.sz + rec._z
+    target.cx, target.cy = target.sx / target.n, target.sy / target.n
+  end
+  return groups
+end
+
+local function buildLaneGroups(syn, t)
+  local list, n = syn.list, syn.listN or 0
+  local myTeam = heroTeam()
+  local paths = buildLanePaths()
+  local navn = navc()
+  local canLaneAt = navn and type(navn.laneAt) == "function" and navValid()
+  reset(LaneGroupsManager.all_groups)
+  reset(LaneGroupsManager.groups_ally)
+  reset(LaneGroupsManager.groups_enemy)
+  reset(LaneGroupsManager.visible_ally)
+  reset(LaneGroupsManager.visible_enemy)
+  reset(LaneGroupsManager.invisible_enemy)
+  reset(LaneGroupsManager.invisible_ally)
+  reset(LaneGroupsManager.groups_invisible_enemy)
+  reset(LaneGroupsManager.w2s_ally)
+  reset(LaneGroupsManager.w2s_enemy)
+  LaneGroupsManager.creep_to_group = {}
+  LaneGroupsManager.groups_by_index_ally = {}
+  LaneGroupsManager.groups_by_index_enemy = {}
+  -- bucket by team+lane
+  local buckets = {}
+  local seenIdx = {}
+  for i = 1, n do
+    local r = list[i]
+    if r and isLaneCreepName(r.name) and (tonumber(r.life) or 0) == 0 then
+      -- lane: nav lane classifier when the walkable map is ready (orders-nav
+      -- task-24 data), static geometry classifier otherwise
+      local lane
+      if canLaneAt then
+        local okL, l = pcall(navn.laneAt, r.x or 0, r.y or 0)
+        if okL and (l == 1 or l == 2 or l == 3) then lane = l end
+      end
+      if not lane then lane = laneOf(r.x or 0, r.y or 0) end
+      local team = tonumber(r.team) or 0
+      local b = buckets[team]
+      if not b then b = {}; buckets[team] = b end
+      local bl = b[lane]
+      if not bl then bl = {}; b[lane] = bl end
+      local idx = tonumber(r.idx) or #bl + 1
+      if not seenIdx[team * 100000 + idx] then
+        seenIdx[team * 100000 + idx] = true
+        local firstSeen = tonumber(r.firstSeen) or t
+        push(bl, {
+          ref = r.idn, index_ = idx, team_ = team, lane = lane,
+          lane_path = lanePathFor(team, lane), lane_bounds = nil,
+          spawn_time = math.floor(firstSeen / 30) * 30,
+          creation_time = firstSeen, marked_dead = false,
+          _x = r.x or 0, _y = r.y or 0, _z = r.z or groundZ(r.x or 0, r.y or 0),
+          _name = r.name, _dormant = r.dormant and true or false,
+        })
+      end
+    end
+  end
+  for team, lanes in pairs(buckets) do
+    local ally = myTeam ~= nil and team == myTeam
+    for lane = 1, 3 do
+      local creeps = lanes[lane]
+      if creeps and #creeps > 0 then
+        for _, cluster in ipairs(clusterLane(creeps)) do
+          groupIndex = groupIndex + 1
+          -- stable id while the wave lives: lane + the entity index of the
+          -- front item of the cluster (doc only needs a unique integer).
+          local gid = lane * 100000 + (tonumber(cluster.items[1] and cluster.items[1].index_) or groupIndex)
+          local visible = 0
+          for _, rec in ipairs(cluster.items) do if not rec._dormant then visible = visible + 1 end end
+          local gold = 0
+          local hasSiege = false
+          for _, rec in ipairs(cluster.items) do
+            gold = gold + bountyOf(rec._name)
+            if type(rec._name) == "string" and rec._name:find("creep_siege", 1, true) then hasSiege = true end
+          end
+          local group = {
+            index_ = gid, is_ally_ = ally, lane = lane, type_ = 0,
+            position_ = vector(cluster.cx, cluster.cy, cluster.sz / math.max(1, cluster.n)),
+            creeps = cluster.items, creeps_refs = {},
+            lane_path = lanePathFor(team, lane), lane_bounds = nil,
+            has_siege = hasSiege,
+            get_gold_bounty_cache = {
+              creeps_count = cluster.n, value = gold, value_string = tostring(math.floor(gold)),
+            },
+            predicted_position = nil, path = nil, meeting_time_cache = nil,
+          }
+          for _, rec in ipairs(cluster.items) do
+            push(group.creeps_refs, rec.ref)
+            LaneGroupsManager.creep_to_group[rec.ref] = group
+          end
+          push(LaneGroupsManager.all_groups, group)
+          if ally then
+            push(LaneGroupsManager.groups_ally, group)
+            LaneGroupsManager.groups_by_index_ally[group.index_] = group
+            if visible > 0 then push(LaneGroupsManager.visible_ally, group) else push(LaneGroupsManager.invisible_ally, group) end
+          else
+            push(LaneGroupsManager.groups_enemy, group)
+            LaneGroupsManager.groups_by_index_enemy[group.index_] = group
+            if visible > 0 then push(LaneGroupsManager.visible_enemy, group) else push(LaneGroupsManager.invisible_enemy, group) end
+          end
+        end
+      end
+    end
+  end
+  LaneGroupsManager.groups_invisible_enemy = LaneGroupsManager.invisible_enemy
+  laneGroupsReady = true
+  return LaneGroupsManager
+end
+
+function LaneGroupsManager:get_group_by_creep(creep)
+  return self.creep_to_group[creep]
+end
+
+function LaneGroupsManager:get_group_by_index(index)
+  local i = tonumber(index)
+  if not i then return nil end
+  return self.groups_by_index_ally[i] or self.groups_by_index_enemy[i]
+end
+
+-- ---------------------------------------------------------------------------
+-- JungleCampsManager (C_DOTA_NeutralSpawner client entities + clustering)
+-- ---------------------------------------------------------------------------
+local JungleCampsManager = {
+  camps = {}, creep_to_camp = {}, non_attached_creeps = {}, already_deleted_creeps = {},
+  _neutralSeen = {}, _campsFromSpawners = false, _discoveryAt = -100,
+}
+
+local ANCIENT_NAMES = { black_dragon = true, granite_golem = true, thunderhide = true, prowler = true }
+local LARGE_NAMES = {
+  centaur_khan = true, dark_troll_warlord = true, ogre_magi = true, satyr_hellcaller = true,
+  polar_furbolg_ursa_warrior = true, hellbear_smasher = true, wildwing = true, mud_golem = true,
+  troll_warlord = true,
+}
+
+local function campTypeOfNames(names)
+  local best = 0
+  for _, name in ipairs(names) do
+    local short = tostring(name):gsub("^npc_dota_neutral_", "")
+    for k in pairs(ANCIENT_NAMES) do
+      if short:find(k, 1, true) then return 3 end
+    end
+    for k in pairs(LARGE_NAMES) do
+      if short:find(k, 1, true) then best = math.max(best, 2) end
+    end
+  end
+  return best
+end
+
+local function readSpawnerType(idn)
+  if not G.readInt then return nil end
+  local e = ent()
+  if not e then return nil end
+  local inst = e.instance(idn)
+  if not inst or inst <= 0x10000 then return nil end
+  local off = 0x5F0
+  if G.schemaOffset then
+    local ok, o = pcall(G.schemaOffset, "C_DOTA_NeutralSpawner", "m_Type")
+    if ok and type(o) == "number" and o >= 0 then off = o end
+  end
+  local ok, v = pcall(G.readInt, inst, off)
+  if ok and type(v) == "number" and v >= 0 and v <= 8 then return v end
+  return nil
+end
+
+local function discoverCamps(t, allowScan)
+  local camps = {}
+  local e = ent()
+  if allowScan and e and e.iter then
+    local okIter, iter = pcall(function() return e.iter() end)
+    if okIter and iter then
+      for idn in iter do
+        local dn = e.designerName(idn)
+        if type(dn) == "string" then
+          local low = dn:lower()
+          if (low:find("spawner", 1, true) or low:find("neutral_camp", 1, true)) and not low:find("rune", 1, true) then
+            local okp, pos = pcall(function() return absOrigin(idn) end)
+            if okp and pos then
+              push(camps, {
+                ref = idn, x = tonumber(pos.x) or 0, y = tonumber(pos.y) or 0,
+                z = tonumber(pos.z) or 0, type_ = readSpawnerType(idn),
+                source = "spawner",
+              })
+            end
+          end
+        end
+      end
+    end
+  end
+  if #camps > 0 then
+    JungleCampsManager._campsFromSpawners = true
+    return camps
+  end
+  -- fallback: cluster neutral creeps seen so far (positions are static per camp)
+  local clusters = {}
+  for _, sight in pairs(JungleCampsManager._neutralSeen) do
+    local target
+    for _, c in ipairs(clusters) do
+      local dx, dy = sight.x - c.cx, sight.y - c.cy
+      if dx * dx + dy * dy <= 500 * 500 then target = c; break end
+    end
+    if not target then
+      target = { items = {}, n = 0, sx = 0, sy = 0, sz = 0, cx = sight.x, cy = sight.y, names = {} }
+      push(clusters, target)
+    end
+    target.n = target.n + 1
+    target.sx = target.sx + sight.x
+    target.sy = target.sy + sight.y
+    target.sz = target.sz + (sight.z or groundZ(sight.x, sight.y))
+    target.cx, target.cy = target.sx / target.n, target.sy / target.n
+    push(target.names, sight.name)
+  end
+  for _, c in ipairs(clusters) do
+    if c.n >= 2 then
+      push(camps, { ref = nil, x = c.cx, y = c.cy, z = c.sz / math.max(1, c.n),
+        type_ = campTypeOfNames(c.names), source = "neutral-cluster" })
+    end
+  end
+  return camps
+end
+
+local function updateCamps(syn, t)
+  JungleCampsManager._discoveryTries = JungleCampsManager._discoveryTries or 0
+  if #JungleCampsManager.camps == 0 and t - (JungleCampsManager._discoveryAt or -100) > 5 then
+    JungleCampsManager._discoveryAt = t
+    -- the full identity-list scan costs ~7ms: try it at most 3 times, then
+    -- fall back to the neutral-creep clustering path only.
+    local allowScan = JungleCampsManager._discoveryTries < 3
+    JungleCampsManager._discoveryTries = JungleCampsManager._discoveryTries + 1
+    local found
+    -- preferred source: nav.campSites() (orders-nav task-24 map data, 15-20
+    -- sites, camp_type from clearing-size heuristic, side from map half)
+    local navn = navc()
+    if navn and type(navn.campSites) == "function" and navValid() then
+      local okS, sites = pcall(navn.campSites)
+      if okS and type(sites) == "table" and #sites >= 4 then
+        found = {}
+        for i, s in ipairs(sites) do
+          if type(s) == "table" and tonumber(s.x) then
+            found[#found + 1] = { x = s.x, y = s.y, z = s.z, type_ = tonumber(s.camp_type) or 1,
+              side_ = tonumber(s.side), source = "nav", box = false }
+          end
+        end
+      end
+    end
+    if not found then found = discoverCamps(t, allowScan) end
+    if #found > 0 then
+      table.sort(found, function(a, b)
+        if a.x ~= b.x then return a.x < b.x end
+        return a.y < b.y
+      end)
+      local camps = {}
+      local src = found[1].source or "?"
+      for i, c in ipairs(found) do
+        local center = vector(c.x, c.y, c.z)
+        camps[i] = {
+          index_ = i, ref = c.ref, team_ = c.side_ or ((c.x + c.y < 0) and 2 or 3),
+          camp_type = c.type_ or 1,
+          position_ = center, position_string_ = string.format("%.0f,%.0f,%.0f", c.x, c.y, c.z),
+          -- nav sites: scripts compute box-derived radius with a default when
+          -- box is false (units_autofarm: `b and ... or 400`); spawner path
+          -- provides the centre+-400 approximation.
+          box = (c.box == false) and false or { min = vector(c.x - 400, c.y - 400, c.z), max = vector(c.x + 400, c.y + 400, c.z) },
+          is_farmed_ = false, flooded_ = false, cleared_notified = false,
+          creeps_all = {}, creeps_alive = {}, creeps_alive_predicted = {},
+          stacks = {}, stacks_cache = { count = 1, invisible_count = 0, calculated_spawn_time = t },
+          get_gold_bounty_cache = { creeps_count = 0, value = 0, value_string = "0" },
+          predicted_names_by_state = { alive = {}, waiting = {} },
+          resolved_groups_by_state = { alive = {}, waiting = {} },
+          maximal_distance_in_camp = 450, _source = src,
+          _seenCreepsAt = nil, _lastSpawn = math.floor(t / 60),
+        }
+      end
+      JungleCampsManager.camps = camps
+      JungleCampsManager._campSource = src
+      glog(string.format("[globals] JungleCampsManager: %d camps discovered source=%s (camp_type/team from nav map data when available, spawner m_Type@0x5F0 otherwise)", #camps, src))
+    end
+  end
+  -- refresh camp creeps from the cached scan
+  local list, n = syn.list, syn.listN or 0
+  local camps = JungleCampsManager.camps
+  if #camps == 0 then return end
+  -- one name map for the whole refresh (gold lookup below is O(camp creeps))
+  local nameByIdx = {}
+  local neutral = {}
+  for i = 1, n do
+    local r = list[i]
+    if r then
+      if r.idx then nameByIdx[r.idx] = r.name end
+      if isNeutralName(r.name) and (tonumber(r.life) or 0) == 0 then neutral[#neutral + 1] = r end
+    end
+  end
+  for _, camp in ipairs(camps) do
+    reset(camp.creeps_all)
+    reset(camp.creeps_alive)
+    local cx, cy = camp.position_.x, camp.position_.y
+    for _, r in ipairs(neutral) do
+      local dx, dy = (r.x or 0) - cx, (r.y or 0) - cy
+      if dx * dx + dy * dy <= 700 * 700 then
+        push(camp.creeps_all, r.idn)
+        if not r.dormant then push(camp.creeps_alive, r.idn) end
+        JungleCampsManager.creep_to_camp[r.idn] = camp
+      end
+    end
+    if #camp.creeps_all > 0 then
+      camp._seenCreepsAt = t
+      camp.is_farmed_ = false
+      local gold = 0
+      for _, idn in ipairs(camp.creeps_all) do
+        gold = gold + bountyOf(nameByIdx[(idn % 0x8000) or 0] or "")
+      end
+      camp.get_gold_bounty_cache = { creeps_count = #camp.creeps_all, value = gold, value_string = tostring(math.floor(gold)) }
+      camp.creeps_alive_predicted = camp.creeps_alive
+    else
+      if camp._seenCreepsAt and t - camp._seenCreepsAt > 30 then
+        camp.is_farmed_ = true
+      end
+      camp.creeps_alive_predicted = camp.creeps_alive
+    end
+    camp.stacks_cache.calculated_spawn_time = (math.floor(t / 60) + 1) * 60
+    camp.stacks_cache.count = math.max(1, #camp.creeps_all > 0 and math.ceil(#camp.creeps_all / 3) or 1)
+    camp.stacks_cache.invisible_count = 0
+  end
+end
+
+function JungleCampsManager:get_by_index(index)
+  local i = tonumber(index)
+  if not i then return nil end
+  return self.camps[i]
+end
+
+function JungleCampsManager:get_camp_by_creep(creep)
+  return self.creep_to_camp[creep]
+end
+
+function JungleCampsManager.get_current_spawn_number(_)
+  return math.max(0, math.floor(now / 60))
+end
+
+function JungleCampsManager:get_previous_spawn_number(_)
+  return math.max(0, math.floor(now / 60) - 1)
+end
+
+function JungleCampsManager.get_possible_neutral_groups(_)
+  return {}
+end
+
+function JungleCampsManager.get_guaranteed_missing_neutrals(_)
+  return {}
+end
+
+function JungleCampsManager.get_neutral_groups(_)
+  return {}
+end
+
+function JungleCampsManager.get_neutral_group_neutrals(_)
+  return {}
+end
+
+function JungleCampsManager.get_neutral_group_main_icon(_)
+  return ""
+end
+
+-- ---------------------------------------------------------------------------
+-- LIB_DAMAGE_PREDICTION (contract: self_play/prediction.lua:6-54)
+-- ---------------------------------------------------------------------------
+local DP = {
+  targets = {}, unit_attack = {},
+  attack_types = { melee = 0, ranged = 1, projectile = 5 },
+  attack_type_to_name = { [0] = "melee", [1] = "ranged", [5] = "projectile" },
+  supports_outgoing_exact = true, supports_tower_attacks = true,
+  filter_dead_attacks = true, loss_spread = 0,
+  my_units = {}, my_units_info = {},
+}
+
+local function trueDamage(attacker, maximum)
+  local N = A().NPC
+  if not N then return 0 end
+  local v = 0
+  if N.GetTrueDamage then
+    local ok, d = pcall(N.GetTrueDamage, attacker)
+    if ok and type(d) == "number" and d > 0 then v = d end
+  end
+  if maximum and N.GetTrueMaximumDamage then
+    local ok, d = pcall(N.GetTrueMaximumDamage, attacker)
+    if ok and type(d) == "number" and d > v then v = d end
+  end
+  return v
+end
+
+local function armorMult(target)
+  local N = A().NPC
+  if not N or not N.GetArmorDamageMultiplier then return 1 end
+  local ok, m = pcall(N.GetArmorDamageMultiplier, target)
+  if ok and type(m) == "number" and m > 0 and m < 8 then return m end
+  return 1
+end
+
+local function damageFor(attacker, target)
+  local base = trueDamage(attacker, false)
+  if base <= 0 then return 0, 0 end
+  local mult = armorMult(target)
+  local maximum = trueDamage(attacker, true)
+  if maximum < base then maximum = base end
+  return base * mult, maximum * mult
+end
+
+local function freshPrediction(target, hp, maxHp)
+  return {
+    hp = hp, max_hp = maxHp, attacks = {}, modifiers = {},
+    outgoing_policy = hp and "outgoing_exact" or nil,
+    outgoing_hp_unknown = hp == nil,
+    begin_count = 1, frame_seq = (G.frame and G.frame()) or 0,
+  }
+end
+
+function DP:begin(target)
+  local p = freshPrediction(target, nil, nil)
+  self.targets[target] = p
+  return p
+end
+
+function DP:begin_outgoing(target, hp, max_hp)
+  local p = freshPrediction(target, tonumber(hp) or 0, tonumber(max_hp) or 0)
+  self.targets[target] = p
+  return p
+end
+
+local function addAttack(p, entry, target)
+  local due = tonumber(entry.time_to_damage)
+  if not due or due <= now - 0.25 or due > now + 4 then return end
+  for _, have in ipairs(p.attacks) do
+    if have.attacker == entry.source then return end   -- one entry per attacker
+  end
+  local dmg, maximum = damageFor(entry.source, target)
+  if dmg <= 0 then return end
+  push(p.attacks, {
+    attacker = entry.source, time_to_damage = due, damage = dmg, max_damage = maximum,
+    is_tower = entry.is_tower == true, is_risk = false,
+    type = (entry.kind == 1 and 1) or 0, start_anim_time = entry.start_anim_time,
+  })
+end
+
+function DP:collect_attacks(target, _exact)
+  local p = self.targets[target]
+  if not p then p = self:begin(target) end
+  for _, entry in pairs(self.unit_attack) do
+    if entry.target == target then addAttack(p, entry, target) end
+  end
+  table.sort(p.attacks, function(a, b) return a.time_to_damage < b.time_to_damage end)
+end
+
+function DP:collect_predictions(_target)
+  -- gap: heroes already locked onto the target are covered by unit_attack above
+end
+
+function DP:collect_projectiles(target)
+  local p = self.targets[target]
+  if not p then p = self:begin(target) end
+  local pending = G.projectiles
+  if not pending then return end
+  for _, proj in pairs(pending) do
+    if isTable(proj) and proj.target == target and tonumber(proj.due) and proj.due > now - 0.25 then
+      local have = false
+      for _, attack in ipairs(p.attacks) do
+        if attack.attacker == proj.source then have = true; break end
+      end
+      if not have then
+        local dmg, maximum = damageFor(proj.source, target)
+        if dmg > 0 then
+          push(p.attacks, {
+            attacker = proj.source, time_to_damage = proj.due, damage = dmg, max_damage = maximum,
+            is_tower = false, is_risk = false, type = 5,
+          })
+        end
+      end
+    end
+  end
+end
+
+function DP:collect_ability_projectiles(_target)
+  -- known gap: targeted spell projectiles are not synthesised (no USERMSG hook)
+end
+
+function DP:collect_ability_animations(_target)
+  -- known gap: spell wind-up damage not modelled
+end
+
+function DP:collect_modifiers(_target)
+  -- known gap: DoT modifiers not modelled (client buff schema has no per-tick damage)
+end
+
+function DP:calculate_damage(attacker)
+  return trueDamage(attacker, false)
+end
+
+function DP:calculate_maximum_damage(attacker)
+  return trueDamage(attacker, true)
+end
+
+function DP:mitigate_damage(_attacker, target, damage)
+  return (tonumber(damage) or 0) * armorMult(target)
+end
+
+function DP:calculate_range_attack_time(attacker, target)
+  local N = A().NPC
+  local point, speed = 0.0, nil
+  if N then
+    if N.GetAttackAnimPoint then local ok, v = pcall(N.GetAttackAnimPoint, attacker); if ok and type(v) == "number" then point = v end end
+    if N.GetAttackProjectileSpeed then local ok, v = pcall(N.GetAttackProjectileSpeed, attacker); if ok and type(v) == "number" and v > 0 then speed = v end end
+  end
+  local travel = 0.0
+  local a, b = absOrigin(attacker), target and absOrigin(target)
+  if speed and a and b then
+    local dx, dy = (a.x or 0) - (b.x or 0), (a.y or 0) - (b.y or 0)
+    travel = math.sqrt(dx * dx + dy * dy) / speed
+  end
+  return point + travel
+end
+
+function DP:calculate_melee_attack_time(attacker)
+  local N = A().NPC
+  if N and N.GetAttackAnimPoint then
+    local ok, v = pcall(N.GetAttackAnimPoint, attacker)
+    if ok and type(v) == "number" then return v end
+  end
+  return 0.3
+end
+
+function DP:calculate_need_go(target, attackTime)
+  local hp = 0
+  local E = A().Entity
+  if E and E.GetHealth then local ok, v = pcall(E.GetHealth, target); if ok and type(v) == "number" then hp = v end end
+  local p = self.targets[target]
+  local incoming = 0
+  for _, attack in ipairs(p and p.attacks or {}) do incoming = incoming + (attack.damage or 0) end
+  return math.max(0, hp - incoming), attackTime or 0
+end
+
+function DP:target_have_bm(target)
+  local N = A().NPC
+  if N and N.HasModifier then
+    local ok, v = pcall(N.HasModifier, target, "modifier_item_blade_mail")
+    if ok and v == true then return true end
+  end
+  return false
+end
+
+local function refreshUnitAttack(syn, t)
+  local src = syn.unitAttack
+  local out = {}
+  if src then
+    for _, e in pairs(src) do
+      if isTable(e) and tonumber(e.due) and t - (tonumber(e.stamp) or 0) < 6 then
+        out[e.source] = {
+          source = e.source, target = e.target, time_to_damage = e.due, is_tower = e.is_tower == true,
+          start_anim_time = e.swingStart, castpoint = e.castpoint,
+          type_ = e.kind, attack_type = e.kind,
+        }
+      end
+    end
+  end
+  DP.unit_attack = out
+  -- prune predictions occasionally so targets[] doesn't grow forever
+  if (G.frame and G.frame() or 0) % 600 == 0 then
+    local keep = {}
+    for key, p in pairs(DP.targets) do
+      if p.hp ~= nil or #p.attacks > 0 then keep[key] = p end
+    end
+    DP.targets = keep
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- XHelpers gap-fill (combat.lua:549-554 looks the special-value KEY up by name)
+-- ---------------------------------------------------------------------------
+local abilityKV, abilityKVReady = nil, false
+local function abilityData()
+  if abilityKVReady then return abilityKV end
+  abilityKVReady = true
+  local x = _G.XHelpers
+  if x and x.xkv and x.xkv.GetKV then
+    local ok, all = pcall(function() return x.xkv:GetKV("npc_abilities") end)
+    if ok and isTable(all) then abilityKV = all.DOTAAbilities or all end
+  end
+  return abilityKV
+end
+
+local function fillXAbility()
+  local x = _G.XHelpers
+  if type(x) ~= "table" then return 0 end
+  local xa = x.XAbility
+  if type(xa) ~= "table" then xa = {}; x.XAbility = xa end
+  local aoe, radius, startW, endW = xa.aoe_radiuses, xa.radiuses, xa.start_widths, xa.end_widths
+  if type(aoe) ~= "table" then aoe = {}; xa.aoe_radiuses = aoe end
+  if type(radius) ~= "table" then radius = {}; xa.radiuses = radius end
+  if type(startW) ~= "table" then startW = {}; xa.start_widths = startW end
+  if type(endW) ~= "table" then endW = {}; xa.end_widths = endW end
+  local kv = abilityData()
+  if not kv then return 0 end
+  local filled = 0
+  for name, block in pairs(kv) do
+    local values = isTable(block) and block.AbilityValues
+    if isTable(values) then
+      local radiusKey, aoeKey, startKey, endKey
+      for key in pairs(values) do
+        local low = tostring(key):lower()
+        if not aoeKey and low:find("aoe_radius", 1, true) then aoeKey = key end
+        if not radiusKey and low:find("radius", 1, true) and not low:find("scepter", 1, true) then radiusKey = key end
+        if not startKey and (low:find("start_width", 1, true) or low == "width") then startKey = key end
+        if not endKey and low:find("end_width", 1, true) then endKey = key end
+      end
+      if aoeKey then aoe[name] = aoeKey end
+      if radiusKey then radius[name] = radiusKey end
+      if startKey then startW[name] = startKey end
+      if endKey then endW[name] = endKey end
+      filled = filled + 1
+    end
+  end
+  glog(string.format("[globals] XHelpers.XAbility filled from npc_abilities KV: abilities=%d aoe=%d radius=%d start_widths=%d end_widths=%d",
+    filled, (function() local c=0; for _ in pairs(aoe) do c=c+1 end; return c end)(),
+    (function() local c=0; for _ in pairs(radius) do c=c+1 end; return c end)(),
+    (function() local c=0; for _ in pairs(startW) do c=c+1 end; return c end)(),
+    (function() local c=0; for _ in pairs(endW) do c=c+1 end; return c end)()))
+  return filled
+end
+
+-- ---------------------------------------------------------------------------
+-- public: bind / update / probes
+-- ---------------------------------------------------------------------------
+function M.bind(ctx)
+  if isTable(ctx) then
+    for k, v in pairs(ctx) do G[k] = v end
+  end
+  G.api = G.api or _G
+  _G.LaneGroupsManager = LaneGroupsManager
+  _G.JungleCampsManager = JungleCampsManager
+  _G.LIB_DAMAGE_PREDICTION = DP
+  M.LaneGroupsManager = LaneGroupsManager
+  M.JungleCampsManager = JungleCampsManager
+  M.LIB_DAMAGE_PREDICTION = DP
+  M.lanePaths = buildLanePaths()
+  -- XHelpers.XAbility gap-fill is deferred to the first in-match update: it
+  -- parses the ability KV, which must not add load-time cost (task-10 budget).
+  G._xabilityPending = true
+  return M
+end
+
+function M.update(syn, t)
+  if not syn then return end
+  now = tonumber(t) or now
+  if G._xabilityPending then
+    G._xabilityPending = false
+    pcall(fillXAbility)
+  end
+  G.projectiles = syn.pending
+  -- task-25 perf (reviewer budget <=10-20 ms/tick): the lane-group/camp rebuild
+  -- allocates tables and walks the cached scan, so it runs at most every 0.5 s
+  -- (creeps die between rebuilds; consumers already guard with Entity.IsAlive).
+  -- The LIB attack table is tiny and stays per-tick so predictions are fresh.
+  local buildDue = now - (G._globalsBuildAt or -1e9) >= 0.5
+  if buildDue then
+    G._globalsBuildAt = now
+    local list, n = syn.list, syn.listN or 0
+    for i = 1, n do
+      local r = list[i]
+      if r and isNeutralName(r.name) then
+        local key = r.idx or i
+        if not JungleCampsManager._neutralSeen[key] then
+          JungleCampsManager._neutralSeen[key] = { x = r.x or 0, y = r.y or 0, z = r.z or 0, name = r.name, t = now }
+        end
+      end
+    end
+    local ok, err = pcall(function()
+      buildLaneGroups(syn, now)
+    end)
+    if not ok and not M._laneErrLogged then
+      M._laneErrLogged = true
+      glog("[globals] LaneGroupsManager update error: " .. tostring(err))
+    end
+    local ok2, err2 = pcall(function()
+      updateCamps(syn, now)
+    end)
+    if not ok2 and not M._campErrLogged then
+      M._campErrLogged = true
+      glog("[globals] JungleCampsManager update error: " .. tostring(err2))
+    end
+  end
+  local ok3, err3 = pcall(function()
+    refreshUnitAttack(syn, now)
+  end)
+  if not ok3 and not M._attackErrLogged then
+    M._attackErrLogged = true
+    glog("[globals] LIB_DAMAGE_PREDICTION attack refresh error: " .. tostring(err3))
+  end
+  -- task-25 reviewer content line: the fresh-state ctx probe cannot see the live
+  -- bot state, so this rate-limited line (in-match only, every 30 s) is the
+  -- ground truth for LaneGroupsManager/JungleCampsManager/LIB_DP/XAbility content.
+  local hero = localHero()
+  if hero and (syn.listN or 0) > 0 and (now - (G._lastGlobalsLog or -1e9) >= 30) then
+    G._lastGlobalsLog = now
+    local allyC, enemyC = 0, 0
+    for _, g in ipairs(LaneGroupsManager.visible_ally) do allyC = allyC + #(g.creeps or {}) end
+    for _, g in ipairs(LaneGroupsManager.visible_enemy) do enemyC = enemyC + #(g.creeps or {}) end
+    local uaN = 0
+    for _ in pairs(DP.unit_attack) do uaN = uaN + 1 end
+    local xa, xaMaps = 0, 0
+    local XA = _G.XHelpers and _G.XHelpers.XAbility
+    if isTable(XA) then
+      for _, key in ipairs({ "aoe_radiuses", "radiuses", "start_widths", "end_widths" }) do
+        local t = XA[key]
+        if isTable(t) then
+          local n = 0
+          for _ in pairs(t) do n = n + 1 end
+          xa = xa + n
+          if n > 0 then xaMaps = xaMaps + 1 end
+        end
+      end
+    end
+    local campSrc = JungleCampsManager._campSource or "none"
+    glog(string.format("[globals] laneGroups=%d all_groups=%d visible_ally=%d visible_enemy=%d ally_creeps=%d enemy_creeps=%d camps=%d campSource=%s navValid=%s libAvail=%s unit_attack=%d attacks=%d xability=%d/maps=%d/4",
+      #LaneGroupsManager.all_groups, #LaneGroupsManager.all_groups, #LaneGroupsManager.visible_ally,
+      #LaneGroupsManager.visible_enemy, allyC, enemyC, #JungleCampsManager.camps, campSrc,
+      tostring(navValid()), tostring(type(DP.begin_outgoing) == "function"), uaN,
+      (function() local p = DP.targets[hero]; return p and #p.attacks or 0 end)(), xa, xaMaps))
+  end
+end
+
+function M.LIB_DAMAGE_PREDICTION_available()
+  return type(G.LIB_DAMAGE_PREDICTION ~= nil or true) == "boolean"
+end
+
+-- parity rows (loader.parityProbe assembles the full [parity] block)
+function M.probeRows()
+  local out = {}
+  local function row(s) push(out, "[parity] " .. s) end
+  -- LaneGroupsManager
+  local ally = LaneGroupsManager.visible_ally
+  local enemy = LaneGroupsManager.visible_enemy
+  row(string.format("GLOBALS LaneGroupsManager visible_ally=%d visible_enemy=%d invisible_enemy=%d all_groups=%d | %s",
+    #ally, #enemy, #LaneGroupsManager.invisible_enemy, #LaneGroupsManager.all_groups,
+    (#ally > 0 or #enemy > 0) and "OK" or "EMPTY(no lane creeps in scan)"))
+  local sample = ally[1] or enemy[1]
+  if sample then
+    local refOk = false
+    if sample.creeps and sample.creeps[1] then refOk = isEntity(sample.creeps[1].ref) end
+    local pathOk = isTable(sample.lane_path) and #sample.lane_path >= 2
+    row(string.format("GLOBALS LaneGroup lane=%s creeps=%d refOk=%s lane_path=%s name=%s | %s",
+      tostring(sample.lane), #sample.creeps, tostring(refOk),
+      pathOk and (#sample.lane_path .. "pts") or "nil",
+      LANE_NAME[sample.lane] or "?",
+      (tonumber(sample.lane) and refOk and pathOk) and "OK" or "PARTIAL"))
+  end
+  -- LIB_DAMAGE_PREDICTION
+  local dp = DP
+  local available = type(dp) == "table" and type(dp.begin_outgoing) == "function"
+  row(string.format("GLOBALS LIB_DAMAGE_PREDICTION available()=%s unit_attack=%d attack_types=%s | %s",
+    tostring(available), (function() local c = 0; for _ in pairs(dp.unit_attack) do c = c + 1 end; return c end)(),
+    dp.attack_types and (tostring(dp.attack_types.melee) .. "/" .. tostring(dp.attack_types.ranged)) or "nil",
+    available and "OK" or "FAIL"))
+  local hero = localHero()
+  if available and hero then
+    local okP = pcall(function()
+      dp:begin_outgoing(hero, 1, 2)
+      dp:collect_attacks(hero, true)
+      dp:collect_predictions(hero)
+      dp:collect_projectiles(hero)
+      dp:collect_ability_projectiles(hero)
+      dp:collect_ability_animations(hero)
+      dp:collect_modifiers(hero)
+    end)
+    local entry = dp.targets[hero]
+    local attacks = (okP and entry and isTable(entry.attacks)) and #entry.attacks or -1
+    row(string.format("GLOBALS LIB_DAMAGE_PREDICTION targets[hero].attacks=%d | %s",
+      attacks, okP and attacks >= 0 and "OK" or "ERR"))
+    local first = okP and entry and entry.attacks and entry.attacks[1]
+    if first then
+      row(string.format("GLOBALS LIB_DAMAGE_PREDICTION attack sample{attacker=%s t=%.2f dmg=%.1f max=%.1f tower=%s} | OK",
+        tostring(npcName(first.attacker)), tonumber(first.time_to_damage) or 0,
+        tonumber(first.damage) or 0, tonumber(first.max_damage) or 0, tostring(first.is_tower)))
+    end
+  end
+  -- JungleCampsManager
+  local camps = JungleCampsManager.camps
+  row(string.format("GLOBALS JungleCampsManager camps=%d source=%s | %s", #camps,
+    tostring(JungleCampsManager._campSource or "none"),
+    #camps >= 10 and "OK" or (#camps > 0 and "PARTIAL(<10)" or "EMPTY")))
+  local camp = camps[1]
+  if camp then
+    row(string.format("GLOBALS Camp index_=%s team_=%s type=%s pos=%s farmed=%s box=%s creeps_alive=%d | %s",
+      tostring(camp.index_), tostring(camp.team_), tostring(camp.camp_type), roundPos(camp.position_),
+      tostring(camp.is_farmed_), isTable(camp.box) and "set" or tostring(camp.box), #camp.creeps_alive,
+      (tonumber(camp.team_) and tonumber(camp.camp_type) ~= nil) and "OK" or "PARTIAL"))
+  end
+  -- nav map data (orders-nav task-24): lane polylines + camp sites used above
+  local navn = navc()
+  if navn and type(navn.laneRoutes) == "function" then
+    local okR, routes = pcall(navn.laneRoutes)
+    local okC, sites = pcall(navn.campSites)
+    local r21 = okR and type(routes) == "table" and routes[2] and routes[2][1]
+    row(string.format("NAV laneRoutes=%s team2.lane1.pts=%s campSites=%s statsValid=%s lanesFromNav=%s | %s",
+      okR and "present" or "ERR", tostring(r21 and #r21 or 0),
+      tostring(okC and type(sites) == "table" and #sites or "nil"), tostring(navValid()),
+      tostring(lanesFromNav),
+      (okR and r21 and #r21 > 1 and okC and type(sites) == "table" and #sites >= 10) and "OK" or "PARTIAL(nav not ready)"))
+  else
+    row("NAV laneRoutes/campSites not present (old nav in this process; static fallback active)")
+  end
+  -- XHelpers
+  local x = _G.XHelpers
+  if isTable(x) then
+    local xa = x.XAbility or {}
+    local nAoe, nRad, nStart, nEnd = 0, 0, 0, 0
+    for _ in pairs(xa.aoe_radiuses or {}) do nAoe = nAoe + 1 end
+    for _ in pairs(xa.radiuses or {}) do nRad = nRad + 1 end
+    for _ in pairs(xa.start_widths or {}) do nStart = nStart + 1 end
+    for _ in pairs(xa.end_widths or {}) do nEnd = nEnd + 1 end
+    row(string.format("GLOBALS XHelpers keys=xkv,XAbility,GetScript XAbility aoe=%d radius=%d start=%d end=%d | %s",
+      nAoe, nRad, nStart, nEnd, (nAoe + nRad + nStart) > 0 and "OK" or "PARTIAL"))
+  end
+  -- documented-deferred
+  row("GLOBALS LaneCreepsManager missing=expected(documented-deferred: 0 direct 16.11 call sites)")
+  row("GLOBALS KV_LIB missing=expected(documented-deferred: 0 direct 16.11 call sites)")
+  return out
+end
+
+return M

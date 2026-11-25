@@ -1,0 +1,2952 @@
+-- api.lua — Self Play Lua-API bridge over schema/entity/orders modules.
+-- Registers the hake-style global namespaces (Entity/NPC/Hero/Heroes/Player/Players/Ability/
+-- GameRules/Engine/Log/Config/...). Entities are represented by their CEntityIdentity pointer.
+-- Field offsets resolved at runtime via schema (patch-resilient). Incremental: stubs fill gaps.
+local ffi = require("ffi")
+local C = ffi.C
+local schema = require("schema")
+local entity = require("entity")
+local orders = require("orders")
+local mathx = require("mathx")
+local flags = require("flags")
+
+ffi.cdef[[
+  typedef struct { void* BaseAddress; void* AllocationBase; unsigned long AllocProtect;
+                   size_t RegionSize; unsigned long State; unsigned long Protect; unsigned long Type; } API_MBI;
+  size_t VirtualQuery(const void* addr, API_MBI* mbi, size_t len);
+]]
+local region = { base = 0, ends = 0 }
+-- region cache: VirtualQuery per field read dominated tick time. 512 (was 32) so
+-- scans of thousands of heap entities stay cached instead of thrashing.
+local regions = {}
+local regionN = 0
+local function readable(p, n)
+  if p == nil then return false end
+  local a = tonumber(ffi.cast("uintptr_t", p))
+  if a < 0x10000 or a > 0x7FFFFFFFFFFF then return false end
+  local need = a + (n or 8)
+  if a >= region.base and need <= region.ends then return true end
+  for i = 1, regionN do
+    local r = regions[i]
+    if a >= r[1] and need <= r[2] then
+      region.base, region.ends = r[1], r[2]
+      return true
+    end
+  end
+  local mbi = region.mbi
+  if not mbi then mbi = ffi.new("API_MBI"); region.mbi = mbi end
+  if C.VirtualQuery(ffi.cast("void*", a), mbi, ffi.sizeof(mbi)) == 0 then return false end
+  if mbi.State ~= 0x1000 then return false end
+  local prot = tonumber(mbi.Protect)
+  if not (prot == 0x02 or prot == 0x04 or prot == 0x08 or prot == 0x20 or prot == 0x40) then
+    region.base, region.ends = 0, 0
+    return false
+  end
+  local b = tonumber(ffi.cast("uintptr_t", mbi.BaseAddress))
+  local e = b + tonumber(mbi.RegionSize)
+  if regionN < 512 then regionN = regionN + 1; regions[regionN] = { b, e }
+  else regions[(regionN % 512) + 1] = { b, e } end
+  region.base, region.ends = b, e
+  return need <= e
+end
+
+local API = {}
+local logf = io.open("D:\\hake\\lotus\\host.log", "a")
+local function log(...)
+  local t = {}
+  for i = 1, select("#", ...) do t[i] = tostring(select(i, ...)) end
+  logf:write(os.date("%H:%M:%S ") .. table.concat(t, "\t") .. "\n"); logf:flush()
+end
+
+-- pump overlay input/redraw from hot paths so the ClickGUI stays responsive
+-- even during long bot ticks (same thread, so widget access is safe).
+local _pumpFn = nil
+local function pump()
+  if _pumpFn == nil then
+    local ok, m = pcall(require, "overlay")
+    _pumpFn = (ok and m.pump) or false
+  end
+  if _pumpFn then _pumpFn() end
+end
+
+-- entity helpers ----------------------------------------------------------
+local function inst(idn)
+  if not idn or not readable(idn, 0x18) then return nil end
+  return entity.instance(idn)
+end
+local function designer(idn) pump(); return entity.designerName(idn) or "" end
+local function entIndex(idn)
+  if idn == nil then return -1 end
+  -- accept both raw pointers (cdata) and numeric addresses; void* cannot take
+  -- pointer arithmetic in LuaJIT, so normalise through uintptr_t first
+  local a = tonumber(ffi.cast("uintptr_t", idn))
+  if not a or a < 0x10000 or a > 0x7FFFFFFFFFFF then return -1 end
+  if not readable(a, 0x14) then return -1 end
+  local h = tonumber(ffi.cast("int32_t*", a + 0x10)[0])
+  if h == nil then return -1 end
+  if h < 0 then h = h + 4294967296 end
+  return h % 0x8000
+end
+-- offset memo. Resolution order: runtime schema (patch-resilient) -> hpp fallback.
+-- The fallback constants are taken verbatim from
+-- dumper/dota2_dump/client.dll.hpp for build 987800-1dd55f3e8eed2d5 and are only
+-- used when the schema system does not expose the field (several C_DOTA_* fields
+-- are network-only and absent from the 15-class schema_dump.json but present in
+-- the full hpp).
+local offCache = {}
+local function offOfFb(cls, name, fb)
+  local t = offCache[cls]
+  if not t then t = {}; offCache[cls] = t end
+  local o = t[name]
+  if o ~= nil then return o end
+  o = schema.offsetOf(cls, name)
+  if o == nil then o = fb end
+  if o ~= nil then t[name] = o end
+  return o
+end
+local function offOf(cls, name) return offOfFb(cls, name, nil) end
+
+-- raw typed readers on an instance/identity pointer -----------------------
+local function rdb(p, off, typ)
+  if not p or not off then return nil end
+  local sz = (typ == "u8" or typ == "i8" or typ == "bool") and 1
+    or (typ == "u64" or typ == "i64" or typ == "ptr") and 8 or 4
+  if not readable(p + off, sz) then return nil end
+  if typ == "u8" or typ == "bool" then return tonumber(ffi.cast("uint8_t*", p + off)[0]) end
+  if typ == "i8" then return tonumber(ffi.cast("int8_t*", p + off)[0]) end
+  if typ == "u16" then return tonumber(ffi.cast("uint16_t*", p + off)[0]) end
+  if typ == "i16" then return tonumber(ffi.cast("int16_t*", p + off)[0]) end
+  if typ == "i32" then return tonumber(ffi.cast("int32_t*", p + off)[0]) end
+  if typ == "u32" then return tonumber(ffi.cast("uint32_t*", p + off)[0]) end
+  if typ == "f32" then return tonumber(ffi.cast("float*", p + off)[0]) end
+  if typ == "ptr" then return tonumber(ffi.cast("uintptr_t*", p + off)[0]) end
+  if typ == "u64" or typ == "i64" then return tonumber(ffi.cast("uint64_t*", p + off)[0]) end
+  return tonumber(ffi.cast("int32_t*", p + off)[0])
+end
+local function cstrAt(p, max)
+  if not p or p < 0x10000 then return nil end
+  -- FFI reads are not catchable by pcall; an unreadable pointer would kill the
+  -- game (02:29 crash). Gate every string read through readable() — the FULL
+  -- bounded window, so a cross-page copy can never AV (22:50 crash class).
+  if not readable(p, max or 128) then return nil end
+  local ok, s = pcall(ffi.string, ffi.cast("const char*", p), max or 128)
+  if not ok then return nil end
+  local z = s:find("\0"); if z then s = s:sub(1, z - 1) end
+  return s
+end
+local function field(idn, cls, name, typ, fb)
+  pump()
+  local i = inst(idn); if not i then return nil end
+  local off = offOfFb(cls, name, fb); if not off then return nil end
+  return rdb(i, off, typ)
+end
+local oSceneNode, oAbsOrigin
+local function origin(idn)
+  local i = inst(idn); if not i then return 0, 0, 0 end
+  if not oSceneNode then oSceneNode = offOfFb("C_BaseEntity", "m_pGameSceneNode", 0x330) end
+  if not oAbsOrigin then oAbsOrigin = offOfFb("CGameSceneNode", "m_vecAbsOrigin", 0xD8) end
+  if not oSceneNode or not oAbsOrigin or not readable(i + oSceneNode, 8) then return 0, 0, 0 end
+  local node = tonumber(ffi.cast("uintptr_t*", i + oSceneNode)[0])
+  if not node or node < 0x10000 or not readable(node + oAbsOrigin, 12) then return 0, 0, 0 end
+  local p = ffi.cast("float*", node + oAbsOrigin)
+  return tonumber(p[0]), tonumber(p[1]), tonumber(p[2])
+end
+local function sceneNode(idn)
+  local i = inst(idn); if not i then return nil end
+  local off = offOfFb("C_BaseEntity", "m_pGameSceneNode", 0x330)
+  local node = off and rdb(i, off, "ptr")
+  if not node or node < 0x10000 or not readable(node, 0x120) then return nil end
+  return node
+end
+local function isAlive(idn) return (field(idn, "C_BaseEntity", "m_lifeState", "u8", 0x354) or 1) == 0 end
+
+-- index registry: entity index -> identity, rebuilt at most every 0.25s -----
+local byIndex, idxAt, idxN = {}, 0, 0
+local function rebuildIndex()
+  byIndex = {}; idxN = 0
+  for idn in entity.iter() do
+    local ix = entIndex(idn)
+    if ix and ix > 0 then byIndex[ix] = idn; idxN = idxN + 1 end
+  end
+  idxAt = os.clock()
+end
+local function indexMap()
+  local now = os.clock()
+  if idxAt == 0 or now - idxAt > 0.25 then rebuildIndex() end
+  return byIndex
+end
+
+-- handle -> identity cache (0.5s). entity.byHandle in entity.lua rebuilds its whole
+-- map on a 50ms TTL, which turns script loops that resolve handles (abilities,
+-- items, owners) into O(n^2) work; this keeps the scan at 2/s.
+local hmap, hmapAt = {}, 0
+local function entByHandle(h)
+  -- Dota CHandle = (serial << 15) | index; INVALID = 0xFFFFFFFF. The old 24-bit
+  -- check (h >= 0xFFFFFF) wrongly rejected VALID handles for entities with
+  -- index >= 512 (probe 21:35: item handle 0x118007D => index 125, serial 560).
+  if not h or h == 0 or h == 0xFFFFFFFF then return nil end
+  if h < 0 then h = h + 4294967296 end
+  local idx = h % 0x8000
+  if idx == 0 then return nil end
+  local now = os.clock()
+  if now - hmapAt > 0.5 then
+    hmapAt = now
+    local m = {}
+    for idn in entity.iter() do
+      local hi = rdb(idn, 0x10, "i32")
+      if hi then
+        if hi < 0 then hi = hi + 4294967296 end
+        local ix = hi % 0x8000
+        if ix > 0 then m[ix] = idn end
+      end
+    end
+    hmap = m
+  end
+  return hmap[idx]
+end
+
+-- API call-count profiler (task-10): names which API functions the script hammers.
+-- Cheap counter increments only; flushed every ~5s wall from GameRules.GetGameTime
+-- OR every 131072 calls, so a single 100s script tick still yields partial counts.
+local apiCalls, apiCallsPrev, apiProfAt = {}, {}, 0
+local apiCallsTotal = 0
+local function profFlush(wall)
+  if wall - apiProfAt < 5 then return end
+  apiProfAt = wall
+  local parts = {}
+  for k, v in pairs(apiCalls) do
+    local d = v - (apiCallsPrev[k] or 0)
+    if d > 0 then parts[#parts + 1] = string.format("%s=%d", k, d) end
+    apiCallsPrev[k] = v
+  end
+  table.sort(parts)
+  do
+    local st = rawget(_G, "__mathxStats")
+    if st then
+      local okc, c, t = pcall(st)
+      if okc and c then parts[#parts + 1] = string.format("vnew=%d/%.1fms", c, (t or 0) * 1000) end
+    end
+    local ns = rawget(_G, "__navStats")
+    if ns then
+      local ok2, s2 = pcall(ns)
+      if ok2 and s2 then parts[#parts + 1] = string.format("nav:paths=%d/%.0fms npcMaps=%d/%.0fms rescans=%d/%.0fms",
+        s2.paths or 0, s2.pathMs or 0, s2.npcMaps or 0, s2.npcMapMs or 0, s2.rescans or 0, s2.rescanMs or 0) end
+    end
+  end
+  do
+    local pcs = rawget(_G, "__perfCounters")
+    if type(pcs) == "table" then
+      local rows = {}
+      for key, fn in pairs(pcs) do
+        local okp, c, t = pcall(fn)
+        if okp and c and c > 0 then
+          rows[#rows + 1] = { key = tostring(key):gsub("^self_play%.", ""), c = c, ms = (t or 0) * 1000 }
+        end
+      end
+      table.sort(rows, function(x, y) return x.ms > y.ms end)
+      for i = 1, math.min(#rows, 10) do
+        parts[#parts + 1] = string.format("%s=%d/%.0fms", rows[i].key, rows[i].c, rows[i].ms)
+      end
+    end
+  end
+  do
+    local mem = collectgarbage("count")
+    local t0 = os.clock()
+    collectgarbage("collect")
+    local gcMs = (os.clock() - t0) * 1000
+    parts[#parts + 1] = string.format("mem=%dKB fullGC=%.0fms", mem or 0, gcMs)
+  end
+  do
+    local at = rawget(_G, "__apiTimes")
+    if type(at) == "table" then
+      local rows = {}
+      for key, rec in pairs(at) do
+        if rec.c > 0 then rows[#rows + 1] = { key = key, c = rec.c, ms = rec.t * 1000 } end
+        rec.c, rec.t = 0, 0
+      end
+      table.sort(rows, function(x, y) return x.ms > y.ms end)
+      local top = {}
+      for i = 1, math.min(#rows, 8) do
+        top[#top + 1] = string.format("%s=%d/%.0fms", rows[i].key, rows[i].c, rows[i].ms)
+      end
+      if #top > 0 then parts[#parts + 1] = "APITOP[" .. table.concat(top, " ") .. "]" end
+    end
+  end
+  log("[api] calls/5s: ", table.concat(parts, " "))
+end
+local function prof(name)
+  apiCalls[name] = (apiCalls[name] or 0) + 1
+  apiCallsTotal = apiCallsTotal + 1
+  if apiCallsTotal % 131072 == 0 then
+    profFlush(tonumber(ffi.C.GetTickCount64()) / 1000.0)
+  end
+end
+
+-- class-name resolution ----------------------------------------------------
+-- Umbrella's Entity.GetClassName returns the SCHEMA CLASS name (e.g.
+-- "C_DOTA_Item_RuneSpawner_Powerup"); CEntityIdentity only stores a designer
+-- name, so resolution is layered:
+--   a) scan identity/instance pointer slots for a CSchemaClassInfoData whose
+--      +0x08 name is a class the runtime schema confirms (exact);
+--   b) curated designer -> class map for classes scripts actually compare;
+--   c) generic npc_dota_hero_* -> C_DOTA_Unit_Hero_* match in the hpp index;
+--   d) designer name (documented approximation; only reachable for classes no
+--      script compares against).
+local hppIndex, hppLoaded = nil, false
+local HPP_PATH = "D:\\hake\\lotus\\dumper\\dota2_dump\\client.dll.hpp"
+local function loadHpp()
+  if hppLoaded then return hppIndex end
+  hppLoaded = true
+  local t0 = os.clock()
+  local f = io.open(HPP_PATH, "r")
+  if not f then log("[api] hpp fallback unavailable (", HPP_PATH, ")"); return nil end
+  local idx = {}
+  local cur
+  for line in f:lines() do
+    local cname, base, size = line:match("^%s*//%s+([%w_]+)%s*:%s+([%w_]+)%s+size%s+(0x%x+)")
+    if cname then
+      local c = idx[cname] or { fields = {} }
+      c.base, c.size = base, tonumber(size)
+      idx[cname] = c
+    end
+    local ns = line:match("^%s*namespace%s+([%w_:]+)%s*{")
+    if ns then cur = ns; idx[ns] = idx[ns] or { fields = {} } end
+    local fname, foff, ftype = line:match("constexpr auto%s+([%w_]+)%s*=%s*(0x%x+)%s*;%s*//%s*(.-)%s*$")
+    if fname and cur then
+      local c = idx[cur] or { fields = {} }
+      c.fields = c.fields or {}
+      c.fields[fname] = { off = tonumber(foff), type = ftype }
+      idx[cur] = c
+    end
+  end
+  f:close()
+  local count = 0
+  for _ in pairs(idx) do count = count + 1 end
+  hppIndex = idx
+  log(string.format("[api] hpp index loaded: %d classes in %.0fms", count, (os.clock() - t0) * 1000))
+  return idx
+end
+-- runtime schema class-info pointers for the few classes scripts compare by name
+local classInfoSet, classInfoPrimed = nil, false
+local CLASS_PROBE_LIST = {
+  "C_DOTA_BaseNPC_XP_Fountain", "C_DOTA_Item_RuneSpawner_Powerup",
+  "C_DOTA_Item_RuneSpawner_Bounty", "C_DOTA_Item_RuneSpawner_XP",
+  "C_DOTA_BaseNPC_HallofFame", "C_DOTA_Item_RuneSpawner",
+}
+local function primeClassInfo()
+  if classInfoPrimed then return classInfoSet end
+  classInfoPrimed = true
+  local set = {}
+  for _, cn in ipairs(CLASS_PROBE_LIST) do
+    local rec = schema.getClass(cn)
+    if rec and rec.raw then set[tonumber(ffi.cast("uintptr_t", rec.raw))] = cn end
+  end
+  classInfoSet = set
+  return set
+end
+-- curated map: only classes whose names the 16.11 scripts compare / need fields on
+local classByDesigner = {
+  ["dota_item_rune_spawner_powerup"] = "C_DOTA_Item_RuneSpawner_Powerup",
+  ["dota_item_rune_spawner_bounty"] = "C_DOTA_Item_RuneSpawner_Bounty",
+  ["dota_item_rune_spawner_xp"] = "C_DOTA_Item_RuneSpawner_XP",
+  ["npc_dota_xp_fountain"] = "C_DOTA_BaseNPC_XP_Fountain",
+  ["npc_dota_halloffame"] = "C_DOTA_BaseNPC_HallofFame",
+  ["dota_gamerules"] = "C_DOTAGamerules",
+  ["dota_data_radiant"] = "C_DOTA_DataNonSpectator",
+  ["dota_data_dire"] = "C_DOTA_DataNonSpectator",
+  ["dota_player_controller"] = "C_DOTAPlayerController",
+  ["dota_gamemanager"] = "C_DOTAGameManager",
+}
+local classCache, classCacheAt = {}, 0
+local classNameIndex -- built lazily from loadHpp(); see PERF note below
+local function entityClassName(idn)
+  if not idn then return nil end
+  local now = os.clock()
+  -- PERF (2026-11-20): the class of an entity never changes; the old 3 s TTL made
+  -- every runes.observe pass re-resolve all ~5600 entities (1.7 s/tick). Keep the
+  -- per-identity cache for the session.
+  if now - classCacheAt > 3600 then classCache = {}; classCacheAt = now end
+  local hit = classCache[idn]
+  if hit then return hit end
+  local found
+  local set = primeClassInfo()
+  local i = inst(idn)
+  if i then
+    for o = 0, 0x30, 8 do
+      local p = rdb(i, o, "ptr")
+      if p and set[p] then found = set[p]; break end
+    end
+  end
+  if not found then
+    for o = 0, 0x68, 8 do
+      local p = rdb(idn, o, "ptr")
+      if p and set[p] then found = set[p]; break end
+    end
+  end
+  local dn = designer(idn)
+  if not found then found = classByDesigner[dn] end
+  if not found and dn:find("^npc_dota_hero_") then
+    local suffix = dn:sub(15):lower():gsub("_", "")
+    local h = loadHpp()
+    if h and #suffix > 2 then
+      for cn in pairs(h) do
+        if cn:find("^C_DOTA_Unit_Hero_") then
+          -- "C_DOTA_Unit_Hero_" is 17 chars: sub(18) is the first hero-name char.
+          -- (Old sub(19) dropped one char => never matched, GetClassName silently
+          -- returned the designer name and broke runes.lua:117 parity.)
+          local norm = cn:sub(18):lower():gsub("_", "")
+          if norm == suffix then found = cn; break end
+        end
+      end
+    end
+  end
+  if not found then
+    -- generic designer -> schema class match (runes.lua:117 expects
+    -- "C_DOTA_Item_RuneSpawner_Powerup" for designer "dota_item_rune_spawner_powerup").
+    -- PERF (2026-11-20): this used to walk every hpp class with two gsubs per class
+    -- for EVERY entity whose class was not resolved. With classCache resetting every
+    -- 3 s and negatives not cached, runes.observe (Entities.GetAll over ~5600 units)
+    -- spent ~40 s per tick inside GetClassName. A one-time normalised index + a
+    -- negative cache per designer makes it O(1) after the first lookup.
+    local cached = classByDesigner[dn]
+    if cached ~= nil then
+      found = cached or nil
+    else
+      local function normName(s)
+        s = s:lower():gsub("[^%a%d]", "")
+        s = s:gsub("^npc", ""):gsub("^c_", ""):gsub("^cdota", "")
+        return s
+      end
+      local h = loadHpp()
+      if h then
+        if not classNameIndex then
+          classNameIndex = {}
+          for cn in pairs(h) do
+            if cn:find("^C_") then
+              local got = normName(cn)
+              if got ~= "" and not classNameIndex[got] then classNameIndex[got] = cn end
+              local gs = got:gsub("^unit", ""):gsub("^item", "")
+              if gs ~= "" and not classNameIndex[gs] then classNameIndex[gs] = cn end
+            end
+          end
+        end
+        local want = normName(dn)
+        if #want > 4 then
+          found = classNameIndex[want]
+          if not found then found = classNameIndex[want:gsub("^unit", ""):gsub("^item", "")] end
+        end
+      end
+      classByDesigner[dn] = found or false
+    end
+  end  found = found or dn
+  classCache[idn] = found
+  return found
+end
+-- field lookup over the hpp class chain (own fields then base classes)
+local function hppField(cls, name)
+  local h = loadHpp()
+  if not h or not cls then return nil end
+  local depth = 0
+  while cls and depth < 16 do
+    local c = h[cls]
+    if not c then return nil end
+    local f = c.fields and c.fields[name]
+    if f then return f, cls end
+    cls = c.base
+    depth = depth + 1
+  end
+  return nil
+end
+-- unique-field fallback: fields that exist with exactly one offset+type schema-wide
+local uniqueField, uniqueFieldTried = {}, {}
+local function uniqueFieldInfo(name)
+  if uniqueFieldTried[name] then return uniqueField[name] end
+  uniqueFieldTried[name] = true
+  local h = loadHpp()
+  if not h then return nil end
+  local same, n = nil, 0
+  for _, c in pairs(h) do
+    local f = c.fields and c.fields[name]
+    if f then
+      n = n + 1
+      if not same then same = f
+      elseif same.off ~= f.off or same.type ~= f.type then return nil end
+    end
+  end
+  if n == 1 then uniqueField[name] = same end
+  return uniqueField[name]
+end
+-- typed read for a hpp field descriptor
+local function readHppField(i, f)
+  local typ = f.type or ""
+  if typ:find("^CHandle") or typ:find("^CUtlStringToken") or typ:find("^AbilityID") or typ:find("^HeroID") then
+    return rdb(i, f.off, "u32")
+  end
+  if typ == "bool" then
+    local v = rdb(i, f.off, "u8"); if v == nil then return nil end; return v ~= 0
+  end
+  if typ == "uint8" or typ == "int8" then return rdb(i, f.off, "u8") end
+  if typ == "uint16" or typ == "int16" then return rdb(i, f.off, "u16") end
+  if typ == "uint64" or typ == "int64" then return rdb(i, f.off, "u64") end
+  if typ == "float32" or typ == "GameTime_t" then return rdb(i, f.off, "f32") end
+  if typ == "uint32" then return rdb(i, f.off, "u32") end
+  if typ:find("%*$") or typ:find("CUtlSymbolLarge") or typ == "CUtlString" then
+    return rdb(i, f.off, "ptr")
+  end
+  return rdb(i, f.off, "i32")
+end
+
+-- Entity ------------------------------------------------------------------
+local Entity = {}
+function Entity.Get(id) return indexMap()[id] end
+function Entity.GetIndex(e)
+  prof("GetIndex") return entIndex(e) end
+function Entity.GetClassName(e)
+  prof("GetClassName") return entityClassName(e) end
+function Entity.GetUnitName(e) return designer(e) end
+function Entity.GetAbsOrigin(e)
+  prof("GetAbsOrigin") local x, y, z = origin(e); return mathx.Vector(x, y, z) end
+function Entity.GetHealth(e)
+  prof("GetHealth") return field(e, "C_BaseEntity", "m_iHealth", "i32", 0x34C) or 0 end
+function Entity.GetMaxHealth(e)
+  prof("GetMaxHealth") return field(e, "C_BaseEntity", "m_iMaxHealth", "i32", 0x348) or 0 end
+function Entity.GetTeamNum(e)
+  prof("GetTeamNum") return field(e, "C_BaseEntity", "m_iTeamNum", "u8", 0x3E7) or 0 end
+function Entity.GetOwner(e)
+  prof("Entity.GetOwner")
+  local h = field(e, "C_BaseEntity", "m_hOwnerEntity", "u32", 0x514)
+  -- CHandle sentinel: INVALID is 0xFFFFFFFF (serial bits make valid handles exceed 24 bits;
+  -- consumers: earth_spirit.lua:13, ember_spirit.lua:23/37 compare Entity.GetOwner(unit) == ctx.hero)
+  if not h or h == 0 or h == 0xFFFFFFFF then return nil end
+  return entByHandle(h)
+end
+function Entity.RecursiveGetOwner(e)
+  local cur = e
+  for _ = 1, 8 do
+    local own = Entity.GetOwner(cur)
+    if not own then return nil end
+    if Entity.IsPlayer(own) then return own end
+    cur = own
+  end
+  return nil
+end
+function Entity.IsAlive(e)
+  prof("IsAlive") return isAlive(e) end
+-- Dormancy == "not visible to the local player" (Umbrella doc). Primary source:
+-- C_DOTA_DataNonSpectator::m_bNPCVisibleState — uint64[256] bitmask indexed by
+-- entity index, i.e. the client's exact "NPC visible to my team" set (hpp 0xE58
+-- on the local team's dota_data_<side> entity). Falls back to the scene-node
+-- dormant flag, then the identity-flags heuristic, when the bitmask is not sane.
+local visMaskCache = { at = 0, inst = nil }
+local function visibleMaskInst()
+  local now = os.clock()
+  local c = visMaskCache
+  if c.inst and now - c.at < 10.0 and readable(c.inst, 0xE58) then return c.inst end
+  c.at = now
+  c.inst = nil
+  local h = Heroes.GetLocal()
+  local team = h and Entity.GetTeamNum(h) or 0
+  for idn in entity.iter() do
+    local dn = designer(idn)
+    if dn == "dota_data_radiant" or dn == "dota_data_dire" then
+      if team == 0 or ((team == 3) == (dn:find("dire") ~= nil)) then
+        c.inst = inst(idn)
+        break
+      end
+    end
+  end
+  return c.inst
+end
+local visMaskStats = { at = 0, sane = nil }
+local function maskSane()
+  -- bisection switch: features.txt `off=visibility_mask` falls back to dormancy
+  if not flags.get("visibility_mask", true) then visMaskStats.sane = false; return false end
+  -- weak sanity gate: a live match has SOME npc_dota entities visible and some
+  -- hidden; an all-0 or all-1 mask is treated as unusable.
+  local now = os.clock()
+  local st = visMaskStats
+  if st.sane ~= nil and now - st.at < 30 then return st.sane end
+  st.at = now
+  local mi = visibleMaskInst()
+  if not mi then st.sane = false; return false end
+  local set, total = 0, 0
+  for idn in entity.iter() do
+    if Entity.IsNPC(idn) then
+      local idx = entIndex(idn)
+      local word = idx > 0 and rdb(mi, 0xE58 + math.floor(idx / 64) * 8, "u64")
+      if word then
+        total = total + 1
+        if math.floor(word / 2 ^ (idx % 64)) % 2 == 1 then set = set + 1 end
+      end
+    end
+  end
+  st.sane = (total > 0 and set > 0 and set < total)
+  if not st.sane then
+    log(string.format("[api] visibility mask unusable (visible=%d/%d) — falling back to node dormant", set, total))
+  elseif not st.logged then
+    st.logged = true
+    log(string.format("[api] visibility mask active (visible=%d/%d npcs)", set, total))
+  end
+  return st.sane
+end
+function Entity.IsDormant(e)
+  prof("IsDormant")
+  if not e or not readable(e, 0x20) then return true end
+  local idx = entIndex(e)
+  if idx > 0 and Entity.IsNPC(e) and maskSane() then
+    local mi = visibleMaskInst()
+    local word = mi and rdb(mi, 0xE58 + math.floor(idx / 64) * 8, "u64")
+    if word then
+      return math.floor(word / 2 ^ (idx % 64)) % 2 ~= 1
+    end
+  end
+  local node = sceneNode(e)
+  if node then
+    local off = offOfFb("CGameSceneNode", "m_bDormant", 0x113)
+    local d = off and rdb(node, off, "u8")
+    if d ~= nil then return d ~= 0 end
+  end
+  local fl = rdb(e, 0x30, "u32")
+  if fl ~= nil then return (fl % 0x100) >= 0x80 end
+  return true
+end
+function Entity.IsEntity(e)
+  prof("IsEntity")
+  if e == nil or not readable(e, 0x70) then return false end
+  if not inst(e) then return false end
+  local dn = designer(e)
+  return dn ~= nil and #dn > 0
+end
+function Entity.IsNPC(e) return designer(e):find("npc_dota") ~= nil end
+function Entity.IsHero(e)
+  local dn = designer(e)
+  return dn:find("npc_dota_hero_") ~= nil and not dn:find("announcer")
+end
+function Entity.IsPlayer(e)
+  local dn = designer(e)
+  return dn:find("player_controller") ~= nil or dn == "player"
+end
+function Entity.IsControllableByPlayer(e, playerId) return NPC.IsControllableByPlayer(e, playerId) end
+function Entity.IsSameTeam(a, b)
+  prof("IsSameTeam") return Entity.GetTeamNum(a) == Entity.GetTeamNum(b) end
+-- Entity.GetField(entity, fieldName[, dbgPrint]) — Umbrella v2 contract: field
+-- NAME only (class derived from the entity), value returned with the schema type.
+-- Legacy internal (entity, class, field) form still accepted.
+function Entity.GetField(e, a, b)
+  prof("GetField")
+  local i = inst(e)
+  if not i then return nil end
+  local name, cls
+  if b == nil then
+    name = a
+    if type(name) ~= "string" then return nil end
+    cls = entityClassName(e)
+  else
+    cls, name = a, b
+  end
+  -- 1) runtime schema on the resolved class: exact offset, type from hpp
+  if cls and schema.offsetOf and schema.offsetOf(cls, name) then
+    local f = hppField(cls, name)
+    if f then return readHppField(i, f) end
+    return rdb(i, schema.offsetOf(cls, name), "i32")
+  end
+  -- 2) hpp class chain (own fields, then base classes)
+  if cls then
+    local f = hppField(cls, name)
+    if f then return readHppField(i, f) end
+  end
+  -- 3) field name that exists in exactly one class schema-wide
+  local u = uniqueFieldInfo(name)
+  if u then return readHppField(i, u) end
+  return nil
+end
+function Entity.GetRotation(e)
+  local node = sceneNode(e)
+  if not node then return mathx.Angle(0, 0, 0) end
+  local ang = offOfFb("CGameSceneNode", "m_angAbsRotation", 0xE4)
+  if not ang or not readable(node + ang, 12) then return mathx.Angle(0, 0, 0) end
+  local p = ffi.cast("float*", node + ang)
+  return mathx.Angle(tonumber(p[0]) or 0, tonumber(p[1]) or 0, tonumber(p[2]) or 0)
+end
+-- Enum.TeamType: TEAM_ENEMY=0, TEAM_FRIEND=1, TEAM_BOTH=2 (enums.lua)
+local function teamMatches(selfIdn, otherIdn, teamType)
+  if teamType == nil or teamType == 2 then return true end
+  local same = Entity.IsSameTeam(selfIdn, otherIdn)
+  if teamType == 0 then return not same end
+  if teamType == 1 then return same end
+  return true
+end
+function Entity.GetHeroesInRadius(e, radius, teamType, omitIllusions, omitDormant)
+  local out = {}
+  local x, y = origin(e)
+  if not x then return out end
+  local r2 = (tonumber(radius) or 0) ^ 2
+  for idn in entity.iter() do
+    if Entity.IsHero(idn) and teamMatches(e, idn, teamType) and Entity.IsAlive(idn) then
+      local ok = true
+      if omitIllusions and (NPC.IsIllusion(idn) or NPC.IsMeepoClone(idn)) then ok = false end
+      if ok and omitDormant ~= false and Entity.IsDormant(idn) then ok = false end
+      if ok then
+        local tx, ty = origin(idn)
+        if tx then
+          local dx, dy = tx - x, ty - y
+          if dx * dx + dy * dy <= r2 then out[#out + 1] = idn end
+        end
+      end
+    end
+  end
+  return out
+end
+-- CTree[] helpers — approximation documented: trees are matched by designer
+-- name (ent_dota_tree / *tree*) since the identity list does not expose the tree
+-- class directly; "active" == not dormant.
+local function treesInRadius(e, radius, tempOnly, active)
+  local out = {}
+  local x, y = origin(e)
+  if not x then return out end
+  local r2 = (tonumber(radius) or 0) ^ 2
+  for idn in entity.iter() do
+    local dn = designer(idn)
+    local isTemp = dn:find("temp_tree") ~= nil
+    local isTree = (dn == "ent_dota_tree") or (dn:find("dota_tree") ~= nil) or (dn:find("_tree") ~= nil)
+    local match = tempOnly and isTemp or (isTree and not isTemp)
+    if match then
+      local alive = not Entity.IsDormant(idn)
+      if active == nil or (active and alive) or (not active and not alive) then
+        local tx, ty = origin(idn)
+        if tx then
+          local dx, dy = tx - x, ty - y
+          if dx * dx + dy * dy <= r2 then out[#out + 1] = idn end
+        end
+      end
+    end
+  end
+  return out
+end
+function Entity.GetTreesInRadius(e, radius, active)
+  if active == nil then active = true end
+  return treesInRadius(e, radius, false, active)
+end
+function Entity.GetTempTreesInRadius(e, radius)
+  return treesInRadius(e, radius, true, nil)
+end
+
+-- NPC ---------------------------------------------------------------------
+-- C_DOTA_BaseNPC offsets verified from dumper/dota2_dump/client.dll.hpp.
+-- KV fallbacks (attack animation point, projectile speed, base attack range,
+-- turn rate) come from gamedata/npc_units.json + npc_heroes.json through
+-- xhelpers.xkv, looked up by the unit's real name (C_DOTA_BaseNPC::m_iszUnitName
+-- @0xD70) because designer names for lane creeps are generic ("npc_dota_creep_lane").
+local NPC = {}
+local _kvUnits, _kvHeroes
+local function unitsKV()
+  if _kvUnits == nil then
+    local ok, x = pcall(require, "xhelpers")
+    _kvUnits = (ok and x and x.xkv and x.xkv:GetKV("npc_units").DOTAAbilities) or {}
+  end
+  return _kvUnits
+end
+local function heroesKV()
+  if _kvHeroes == nil then
+    local ok, x = pcall(require, "xhelpers")
+    _kvHeroes = (ok and x and x.xkv and x.xkv:GetKV("npc_heroes").DOTAAbilities) or {}
+  end
+  return _kvHeroes
+end
+-- real unit name string (CUtlSymbolLarge) — "npc_dota_creep_badguys_melee" etc.
+-- Cached per identity (ffi.string allocates) and KV tables cached by name.
+local unitNameCache, unitNameCacheAt = {}, 0
+local kvByName = {}
+local function unitNameOf(e)
+  local now = os.clock()
+  if now - unitNameCacheAt > 3 then unitNameCache = {}; unitNameCacheAt = now end
+  local hit = unitNameCache[e]
+  if hit then return hit end
+  local i = inst(e)
+  local s
+  if i then
+    local p = rdb(i, offOfFb("C_DOTA_BaseNPC", "m_iszUnitName", 0xdd8), "ptr")
+    s = p and cstrAt(p, 96)
+  end
+  if not s or #s < 4 then s = designer(e) end
+  unitNameCache[e] = s
+  return s
+end
+local EMPTY_KV = {}
+local function unitKV(e)
+  local n = unitNameOf(e)
+  local kv = kvByName[n]
+  if kv then return kv end
+  kv = heroesKV()[n] or unitsKV()[n] or EMPTY_KV
+  kvByName[n] = kv
+  return kv
+end
+local function kvScalar(kv, key)
+  local raw = kv[key]
+  if type(raw) == "table" then raw = raw.value end
+  if type(raw) == "number" then return raw end
+  if type(raw) ~= "string" then return nil end
+  return tonumber(raw:match("%-?%d+%.?%d*"))
+end
+function NPC.GetUnitName(e)
+  prof("GetUnitName")
+  local n = unitNameOf(e)
+  if n and #n > 0 then return n end
+  return designer(e)
+end
+function NPC.GetHealth(e) return Entity.GetHealth(e) end
+function NPC.GetMaxHealth(e) return Entity.GetMaxHealth(e) end
+function NPC.GetMana(e) return field(e, "C_DOTA_BaseNPC", "m_flMana", "f32", 0xd60) or 0 end
+function NPC.GetMaxMana(e) return field(e, "C_DOTA_BaseNPC", "m_flMaxMana", "f32", 0xd64) or 0 end
+function NPC.GetCurrentLevel(e)
+  prof("GetCurrentLevel") return field(e, "C_DOTA_BaseNPC", "m_iCurrentLevel", "i32", 0xcfc) or 1 end
+function NPC.GetMoveSpeed(e) return field(e, "C_DOTA_BaseNPC", "m_iMoveSpeed", "i32", 0xd40) or 0 end
+function NPC.GetAttackRange(e)
+  prof("GetAttackRange") return field(e, "C_DOTA_BaseNPC", "m_iAttackRange", "i32", 0xd28) or 0 end
+-- current range minus KV base range (item/ability range bonuses); 0 when unknown
+function NPC.GetAttackRangeBonus(e)
+  local cur = field(e, "C_DOTA_BaseNPC", "m_iAttackRange", "i32", 0xd28) or 0
+  local base = kvScalar(unitKV(e), "AttackRange")
+  if not base or base <= 0 then return 0 end
+  local bonus = cur - base
+  if bonus < 0 or bonus > 3000 then return 0 end
+  return bonus
+end
+function NPC.GetHealthRegen(e) return field(e, "C_DOTA_BaseNPC", "m_flHealthRegen", "f32", 0x17bc) or 0 end
+function NPC.GetManaRegen(e) return field(e, "C_DOTA_BaseNPC", "m_flManaRegen", "f32", 0x17b8) or 0 end
+-- m_iDamageMin/Max are the client-side current damage (white+green); live probe
+-- showed m_iDamageMin == m_iBaseDamageMin for units with no bonus, so the field
+-- already includes m_iDamageBonus and must not be added again.
+function NPC.GetTrueDamage(e)
+  prof("GetTrueDamage") return field(e, "C_DOTA_BaseNPC", "m_iDamageMin", "i32", 0xe80) or 0 end
+function NPC.GetTrueMaximumDamage(e) return field(e, "C_DOTA_BaseNPC", "m_iDamageMax", "i32", 0xe84) or 0 end
+function NPC.GetHullRadius(e)
+  prof("GetHullRadius") return field(e, "C_DOTA_BaseNPC", "m_flHullRadius", "f32", 0xdc8) or 0 end
+function NPC.IsHero(e)
+  prof("IsHero") return designer(e):find("npc_dota_hero_") ~= nil end
+function NPC.IsCreep(e)
+  prof("IsCreep") return designer(e):find("npc_dota_creep") ~= nil end
+function NPC.IsLaneCreep(e) return designer(e):find("npc_dota_creep_lane") ~= nil end
+function NPC.IsRanged(e)
+  local caps = field(e, "C_DOTA_BaseNPC", "m_iAttackCapabilities", "u32", 0x142c) or 0
+  return bit.band(caps, 2) ~= 0  -- DOTA_UNIT_CAP_RANGED_ATTACK
+end
+function NPC.IsIllusion(e) return (field(e, "C_DOTA_BaseNPC", "m_bIsIllusion", "u8", 0xd88) or 0) == 1 end
+function NPC.IsNeutral(e) return (field(e, "C_DOTA_BaseNPC", "m_bIsNeutralUnitType", "u8", 0xd03) or 0) == 1 end
+function NPC.IsAncient(e) return (field(e, "C_DOTA_BaseNPC", "m_bIsAncient", "u8", 0xd00) or 0) == 1 end
+function NPC.IsTower(e) return designer(e):find("npc_dota_tower") ~= nil end
+function NPC.IsBarracks(e) return designer(e):find("npc_dota_barracks") ~= nil end
+function NPC.IsFort(e) return designer(e):find("npc_dota_fort") ~= nil end
+function NPC.IsStructure(e)
+  prof("IsStructure") return NPC.IsTower(e) or NPC.IsBarracks(e) or NPC.IsFort(e) end
+function NPC.IsCourier(e) return designer(e):find("npc_dota_courier") ~= nil end
+function NPC.IsRoshan(e) return designer(e):find("npc_dota_roshan") ~= nil end
+function NPC.IsWard(e) return designer(e):find("npc_dota_ward") ~= nil end
+-- m_bIsMoving (hpp 0x1748) — true while the unit is running/moving
+function NPC.IsRunning(e) return (field(e, "C_DOTA_BaseNPC", "m_bIsMoving", "u8", 0x17c0) or 0) ~= 0 end
+local Enum = require("enums")
+function NPC.IsStunned(e) return NPC.HasState(e, Enum.ModifierState.MODIFIER_STATE_STUNNED) end
+function NPC.IsSilenced(e) return NPC.HasState(e, Enum.ModifierState.MODIFIER_STATE_SILENCED) end
+function NPC.IsRooted(e) return NPC.HasState(e, Enum.ModifierState.MODIFIER_STATE_ROOTED) end
+function NPC.IsDisarmed(e) return NPC.HasState(e, Enum.ModifierState.MODIFIER_STATE_DISARMED) end
+-- Dota activity enum (enums.lua): 1502 = ACT_DOTA_RUN, 1503 = ACT_DOTA_ATTACK,
+-- 1504 = ACT_DOTA_ATTACK2, 1505 = ACT_DOTA_ATTACK_EVENT. The old test treated
+-- 1502 (running) as attacking, so every moving creep/hero looked hostile: the
+-- creep-block filter dropped all lane creeps (members=0 -> "First wave missed")
+-- and laneThreat.attacked was permanently true (live 2026-11-20).
+function NPC.__attackDebug(e)
+  local oa = offOfFb("C_DOTA_BaseNPC", "m_NetworkActivity", 0x1960)
+  local ol = offOfFb("C_DOTA_BaseNPC", "m_flLastAttackTime", 0x1440)
+  local act = field(e, "C_DOTA_BaseNPC", "m_NetworkActivity", "i32", 0x1960)
+  local t = field(e, "C_DOTA_BaseNPC", "m_flLastAttackTime", "f32", 0x1440)
+  return act, t, GameRules.GetGameTime(), oa, ol
+end
+function NPC.IsAttacking(e)
+  local act = field(e, "C_DOTA_BaseNPC", "m_NetworkActivity", "i32", 0x1960) or 0
+  if act == 1503 or act == 1504 or act == 1505 then return true end
+  local t = field(e, "C_DOTA_BaseNPC", "m_flLastAttackTime", "f32", 0x1440) or 0
+  local now = GameRules.GetGameTime()
+  -- live 2026-11-20: this field is NOT always on the GameTime clock. Heroes read
+  -- lastAttack == 336 while GameTime was 99.9 (future mark), and freshly spawned
+  -- creeps landed inside the old (t <= now+1) window, so every new creep looked
+  -- attacking and the creep blocker dropped its whole wave. Only accept a value
+  -- that is on the same clock AND in the past.
+  return t > 0 and now > 0 and t <= now and (now - t) < 0.3
+end
+-- m_iIsControllableByPlayer64 (0xCB8): one bit per player id
+function NPC.IsControllableByPlayer(e, playerId)
+  if not e then return false end
+  local pid = tonumber(playerId)
+  local i = inst(e)
+  if i and pid and pid >= 0 then
+    local mask = rdb(i, offOfFb("C_DOTA_BaseNPC", "m_iIsControllableByPlayer64", 0xd18), "u64")
+    if mask and mask ~= 0 then
+      return math.floor(mask / 2 ^ (pid % 64)) % 2 == 1
+    end
+  end
+  return false
+end
+-- modifier list from CDOTA_ModifierManager (NPC+0xE30).
+-- Layout verified against runtime schema: CDOTA_ModifierManager size 0x390, first
+-- schema field at 0x28, so the buff vector sits at 0x10: {int32 count @0x10,
+-- int32 cap @0x14, CDOTA_Buff** @0x18}. CDOTA_Buff offsets (runtime schema /
+-- umbrella doc): m_name 0x28 (CUtlString), m_flCreationTime 0x54, m_flDieTime 0x64,
+-- m_flDuration 0x60, m_iStackCount 0x84, m_hCaster 0x68, m_iSerialNumber 0x48.
+local MOD_MGR_OFF = 0xE30
+local MOD_CNT_OFF, MOD_PTR_OFF = 0x10, 0x18
+-- short-lived per-identity cache: modifiers change on the server tick, and the
+-- scripts query them many times per tick (HasModifier alone is called >100x)
+local buffCache, buffCacheAt = {}, 0
+-- C_DOTA_BaseNPC::m_ModifierManager moved with the 6986 schema (now 0xE98; the old
+-- 0xE30 read unrelated memory and every HasModifier/GetModifiers call came back
+-- empty, so Self Play never saw its own buffs). The inner CUtlVector layout is not
+-- in the dumper schema, so try the known layouts and accept only one whose entries
+-- carry a "modifier_*" name string at +0x28.
+-- NOTE: kept inside an IIFE factory — the api.lua main chunk is at LuaJIT's
+-- 200-local limit; extra chunk-level locals here fail the whole module load.
+local buffObjects = (function()
+  local MODMGR_LAYOUTS = { { 0x10, 0x18 }, { 0x8, 0x10 }, { 0x0, 0x8 }, { 0x18, 0x20 }, { 0x20, 0x28 } }
+  local function modifierNamePlausible(obj)
+    if not obj or obj < 0x10000 or not readable(obj, 0x30) then return false end
+    local p = rdb(obj, 0x28, "ptr")
+    if not p or p < 0x10000 then return false end
+    local s = cstrAt(p, 96)
+    return s ~= nil and s:find("^modifier") ~= nil
+  end
+  return function(e)
+    local now = os.clock()
+    if now - buffCacheAt > 0.1 then buffCache = {}; buffCacheAt = now end
+    local cached = buffCache[e]
+    if cached then return cached end
+    local i = inst(e)
+    local out = {}
+    if i then
+      local base = i + offOfFb("C_DOTA_BaseNPC", "m_ModifierManager", 0xE98)
+      if readable(base, 0x40) then
+        for _, lay in ipairs(MODMGR_LAYOUTS) do
+          local count = rdb(base, lay[1], "i32") or 0
+          local ptr = rdb(base, lay[2], "ptr")
+          if ptr and ptr >= 0x10000 and count > 0 and count <= 128 and readable(ptr, count * 8) then
+            local tmp = {}
+            local okAll = true
+            for n = 0, count - 1 do
+              local obj = tonumber(ffi.cast("uintptr_t*", ptr + n * 8)[0])
+              if not modifierNamePlausible(obj) then okAll = false; break end
+              tmp[#tmp + 1] = obj
+            end
+            if okAll and #tmp > 0 then out = tmp; break end
+          end
+        end
+      end
+    end
+    buffCache[e] = out
+    return out
+  end
+end)()
+local buffNameCache, buffNameCacheAt = {}, 0
+local function buffName(obj)
+  local now = os.clock()
+  if now - buffNameCacheAt > 1 then buffNameCache = {}; buffNameCacheAt = now end
+  local hit = buffNameCache[obj]
+  if hit then return hit end
+  local p = rdb(obj, 0x28, "ptr")
+  local s = p and cstrAt(p, 96) or false
+  buffNameCache[obj] = s
+  if s == false then return nil end
+  return s
+end
+-- CModifier handle used by the script API: we hand out the buff object pointer.
+function NPC.GetModifiers(e, propertyFilter)
+  local out = {}
+  for _, obj in ipairs(buffObjects(e)) do out[#out + 1] = obj end
+  return out
+end
+function NPC.HasModifier(e, name)
+  prof("HasModifier")
+  if not name then return false end
+  for _, obj in ipairs(buffObjects(e)) do
+    if buffName(obj) == name then return true end
+  end
+  return false
+end
+function NPC.GetModifier(e, name)
+  for _, obj in ipairs(buffObjects(e)) do
+    if buffName(obj) == name then return obj end
+  end
+  return nil
+end
+local function buffRemaining(obj)
+  local die = rdb(obj, 0x64, "f32")
+  if not die then return 0 end
+  local now = GameRules.GetGameTime()
+  local left = die - now
+  if left < 0 then left = 0 end
+  return left
+end
+-- m_nUnitState64 is a bitmask indexed by Enum.ModifierState
+function NPC.HasState(e, state)
+  local i = inst(e)
+  if not i or not state then return false end
+  -- schema (build 6986): C_DOTA_BaseNPC::m_nUnitState64 = 0x1330. The old 0x12B8
+  -- was stale, so every stun/root/disarm/immune check read unrelated memory.
+  local mask = rdb(i, offOfFb("C_DOTA_BaseNPC", "m_nUnitState64", 0x1330), "u64")
+  if not mask then return false end
+  local bit = state % 64
+  return math.floor(mask / 2 ^ bit) % 2 == 1
+end
+-- Aghanim upgrades: C_DOTA_BaseNPC::m_bLastScepterState/m_bLastShardState and the
+-- forced variants (custom games); m_nScepterUpgradeID/ShardUpgradeID as backstop.
+function NPC.HasScepter(e)
+  if (field(e, "C_DOTA_BaseNPC", "m_bForceScepterState", "u8", 0x1366) or 0) ~= 0 then return true end
+  if (field(e, "C_DOTA_BaseNPC", "m_bLastScepterState", "u8", 0x1365) or 0) ~= 0 then return true end
+  return (field(e, "C_DOTA_BaseNPC", "m_nScepterUpgradeID", "u32", 0x1878) or 0) ~= 0
+end
+function NPC.HasShard(e)
+  if (field(e, "C_DOTA_BaseNPC", "m_bForceShardState", "u8", 0x1367) or 0) ~= 0 then return true end
+  if (field(e, "C_DOTA_BaseNPC", "m_bLastShardState", "u8", 0x1364) or 0) ~= 0 then return true end
+  return (field(e, "C_DOTA_BaseNPC", "m_nShardUpgradeID", "u32", 0x187c) or 0) ~= 0
+end
+local function abilitySlots(e)
+  local i = inst(e)
+  if not i then return nil, 0 end
+  local off = schema.offsetOf("C_DOTA_BaseNPC", "m_vecAbilities") or 3368
+  if not readable(i + off, 16) then return nil, 0 end
+  local count = tonumber(ffi.cast("int32_t*", i + off)[0]) or 0
+  local ptr = tonumber(ffi.cast("uintptr_t*", i + off + 8)[0])
+  if not ptr or ptr < 0x10000 or count <= 0 or count > 40 then return nil, 0 end
+  if not readable(ptr, count * 4) then return nil, 0 end
+  return ptr, count
+end
+local function abilityAt(e, index)
+  local ptr, count = abilitySlots(e)
+  if not ptr or index < 0 or index >= count then return nil end
+  local handle = tonumber(ffi.cast("uint32_t*", ptr + index * 4)[0])
+  return entByHandle(handle)
+end
+function NPC.GetAbilityByIndex(e, i)
+  prof("GetAbilityByIndex") return abilityAt(e, i or 0) end
+function NPC.GetAbility(e, name)
+  if not name or name == "" then return nil end
+  local ptr, count = abilitySlots(e)
+  if not ptr then return nil end
+  for n = 0, count - 1 do
+    local idn = abilityAt(e, n)
+    local dn = idn and designer(idn) or ""
+    if dn == name or dn == "item_" .. name then return idn end
+  end
+  return nil
+end
+-- inventory: C_DOTA_UnitInventory @ NPC+0x11C0 (hpp client.dll.hpp:25405/25406, size 0xF0).
+-- m_hItems @+0x20 is C_NetworkUtlVectorBase< CHandle< C_BaseEntity > > (hpp:25407), and
+-- m_bItemQueried @+0x88 is bool[27] (hpp:25408) => the m_hItems member occupies 0x20..0x87.
+-- Probe 21:16 (fresh Treant game) proved the client-side layout of that member:
+--   +0x20 = int32 slot capacity (25), then 25 x CHandle INLINE at +0x24 + slot*4
+--   (25*4 = 100 bytes ends exactly at m_bItemQueried 0x88). There is no heap pointer
+--   (+0x28 read 0xFFFFFFFF). The old inline read at +0x20 was therefore OFF BY ONE:
+--   its index 1/10/11/12/16 were really slots 0/9/10/11/15, which is why the TP scroll
+--   showed up at index 16 instead of the documented TP slot 15.
+-- Slot order (reference-confirmed): [0..5] main, [6..8] backpack, [9..14] stash,
+-- [15] TP scroll, [16] neutral. Proof from the same fresh-game probe: slot 15 =
+-- item_tpscroll and slot 16 = empty (a 4:53 game cannot have a neutral item), while the
+-- +0x20 base put the TP scroll into the neutral slot; shop.lua:550 uses
+-- NPC.GetItemByIndex(hero, 15) for the teleport and neutral_items.lua:167 uses index 16.
+-- INVENTORY (build 988312): the layout moved. C_DOTA_BaseNPC::m_Inventory is a
+-- POINTER (0x1238, resolved from live schema) to C_DOTA_UnitInventory, whose
+-- m_hItems array starts at +0x20 and holds CEntityHandle (u32) entries.
+-- The old embedded layout (0x11C0 with slots at +0x24) made every item invisible,
+-- so Self Play kept buying tpscrolls it already owned.
+local INV = { ptrOff = nil, slotsOff = 0x20, maxSlot = 16, ptrOffFallback = 0x1238 }
+local function invisOff()
+  if INV.ptrOff then return INV.ptrOff end
+  local off = offOfFb("C_DOTA_BaseNPC", "m_Inventory", INV.ptrOffFallback)
+  INV.ptrOff = off or INV.ptrOffFallback
+  return INV.ptrOff
+end
+local function invPtr(e)
+  local i0 = inst(e)
+  if not i0 then return nil end
+  local p = rdb(i0, invisOff(), "ptr")
+  if not p or p < 0x10000 then return nil end
+  return p
+end
+-- After build 988312 the client schema exposes neither a usable m_hItems stride
+-- nor an item slot field (verified live: the pointer path returns junk handles).
+-- Enumerate world items and group them by Entity.GetOwner instead; cached for a
+-- few hundred ms because GetItem is called many times per tick.
+-- NOTE: kept inside a factory function — api.lua's main chunk is at LuaJIT's
+-- 200-local limit, so new locals must not live at file scope.
+local itemAt = (function()
+  local mapAt, mapData = 0, nil
+  local function ownerItemMap()
+    local now = os.clock()
+    if mapData and (now - mapAt) < 0.4 then return mapData end
+    mapAt = now
+    local map = {}
+    for idn in entity.iter() do
+      local dn = designer(idn)
+      if dn ~= "" and dn:sub(1, 5) == "item_" then
+        local own = Entity.GetOwner(idn)
+        if own then
+          local list = map[own]
+          if not list then list = {}; map[own] = list end
+          list[#list + 1] = idn
+        end
+      end
+    end
+    mapData = map
+    return map
+  end
+  return function(e, i)
+    i = math.floor(tonumber(i or 0) or 0)
+    if i < 0 or i > INV.maxSlot then return nil end
+    local m = ownerItemMap()
+    local list = m[e]
+    if not list then return nil end
+    return list[i + 1]
+  end
+end)()
+function NPC.GetItemByIndex(e, i)
+  prof("GetItemByIndex")
+  return itemAt(e, i or 0)
+end
+-- NPC.GetItem(npc, name, [isReal]): isReal (default true) limits to main slots 0-5
+-- plus the neutral slot 16; isReal=false scans all slots incl. backpack/stash and
+-- the TP slot (umbrella_api/npc.md GetItem).
+function NPC.GetItem(e, name, isReal)
+  if not name then return nil end
+  local want = name:find("^item_") and name or ("item_" .. name)
+  local realOnly = isReal ~= false
+  for i = 0, INV.maxSlot do
+    if not realOnly or i <= 5 or i == 16 then
+      local it = itemAt(e, i)
+      if it and designer(it) == want then return it end
+    end
+  end
+  return nil
+end
+-- NPC.GetItems(npc): every carried item (used by the shop/buy planner to see
+-- what is already owned; the old stub returned {} so the bot re-bought scrolls)
+function NPC.GetItems(e)
+  prof("GetItems")
+  local out = {}
+  for i = 0, INV.maxSlot do
+    local it = itemAt(e, i)
+    if it then out[#out + 1] = it end
+  end
+  return out
+end
+function NPC.GetOwnerNPC(e)
+  local h = field(e, "C_DOTA_BaseNPC", "m_hOwnerNPC", "u32", 0x17dc)
+  -- same CHandle sentinel fix as Entity.GetOwner (consumer: coordination.lua:29-30)
+  if not h or h == 0 or h == 0xFFFFFFFF then return nil end
+  return entByHandle(h)
+end
+local orderN = 0
+local function olog(msg)
+  orderN = orderN + 1
+  if orderN <= 8 or orderN % 25 == 0 then log("[order]", msg) end
+end
+local function vec3(position)
+  if type(position) ~= "table" then return nil end
+  return { tonumber(position.x or position[1]) or 0, tonumber(position.y or position[2]) or 0, tonumber(position.z or position[3]) or 0 }
+end
+local function asInstance(e)
+  if not e then return nil end
+  return inst(e)
+end
+function NPC.MoveTo(npc, position, queue, show)
+  local v = vec3(position)
+  if not v then return false end
+  olog(string.format("MoveTo %s -> %.0f,%.0f", designer(npc), v[1], v[2]))
+  local ok, err = orders.prepare(orders.ORDER.DOTA_UNIT_ORDER_MOVE_TO_POSITION or 1, 0, v, 0, asInstance(npc), queue == true, show == true)
+  if not ok and err then log("[order] MoveTo fail:", err) end
+  return ok
+end
+function NPC.IsEntityInRange(e, other, range)
+  if not e or not other then return false end
+  local x1, y1 = origin(e)
+  local x2, y2 = origin(other)
+  if not x1 or not x2 then return false end
+  local dx, dy = x1 - x2, y1 - y2
+  range = tonumber(range) or 0
+  return dx * dx + dy * dy <= range * range
+end
+-- m_iNearShopMask (0x13EC): bit per Enum.ShopType of shops in range
+function NPC.IsInRangeOfShop(e, shopType)
+  local mask = field(e, "C_DOTA_BaseNPC", "m_iNearShopMask", "i32", 0x1464) or 0
+  if mask == 0 then return false end
+  local t = tonumber(shopType)
+  if t == nil then return true end
+  return math.floor(mask / 2 ^ t) % 2 == 1
+end
+function NPC.IsVisible(e) return not Entity.IsDormant(e) end
+function NPC.IsVisibleToEnemies(e)
+  -- resolved at api.register() to FogOfWar.IsVisibleToEnemies (enemy-team vision
+  -- approximation, documented in the FogOfWar section)
+  return FogOfWar.IsVisibleToEnemies(e)
+end
+-- attacks per second = (base attack speed + agility) / 100 / base attack time.
+-- Item/buff attack-speed modifiers are not exposed by the client schema, so they
+-- are NOT included (documented approximation; affects attack timing by the IAS
+-- the unit currently has from items/buffs).
+function NPC.__aspdDebug(e)
+  local base = field(e, "C_DOTA_BaseNPC", "m_iBaseAttackSpeed", "i32", 0xd44)
+  local bat = field(e, "C_DOTA_BaseNPC", "m_flBaseAttackTime", "f32", 0xd48)
+  local agi = field(e, "C_DOTA_BaseNPC_Hero", "m_flAgilityTotal", "f32", 0x1b78)
+  local ob = offOfFb("C_DOTA_BaseNPC", "m_iBaseAttackSpeed", 0xd44)
+  local ot = offOfFb("C_DOTA_BaseNPC", "m_flBaseAttackTime", 0xd48)
+  local oa = offOfFb("C_DOTA_BaseNPC_Hero", "m_flAgilityTotal", 0x1b78)
+  return base, bat, agi, ob, ot, oa
+end
+function NPC.GetAttackSpeed(e, ignoreTemp)
+  prof("GetAttackSpeed")
+  local base = field(e, "C_DOTA_BaseNPC", "m_iBaseAttackSpeed", "i32", 0xd44) or 100
+  local agi = 0
+  if Entity.IsHero(e) then
+    agi = field(e, "C_DOTA_BaseNPC_Hero", "m_flAgilityTotal", "f32", 0x1b78) or 0
+  end
+  local as = base + agi
+  if as < 20 then as = 20 end
+  local bat = field(e, "C_DOTA_BaseNPC", "m_flBaseAttackTime", "f32", 0xd48) or 1.7
+  if bat < 0.1 or bat > 10 then bat = 1.7 end
+  return as / 100 / bat
+end
+function NPC.GetSecondsPerAttack(e, ignoreTemp)
+  prof("SecondsPerAttack")
+  local aps = NPC.GetAttackSpeed(e, ignoreTemp)
+  if aps <= 0 then return 1.7 end
+  return 1 / aps
+end
+-- AttackAnimationPoint from the unit KV is in SECONDS (Treant 0.6, melee lane creep
+-- 0.467). Every Self Play consumer turns it into a windup by dividing by
+-- GetAttackSpeed(unit) — attacks per SECOND — so the API must return the animation
+-- point as a FRACTION OF THE ATTACK CYCLE: fraction = seconds / BaseAttackTime.
+-- Verified algebra: windup = fraction / aps = (AAP/BAT) / ((1+IAS)/BAT) = AAP/(1+IAS),
+-- which is the real Dota windup. Returning raw seconds (the old behaviour) made every
+-- planned swing start BAT-times too early (Treant 1.14s instead of 0.6s), so last-hit
+-- and deny damage landed before the creep was in kill range -> 0 conversion.
+function NPC.GetAttackAnimPoint(e)
+  prof("AttackAnimPoint")
+  local v = kvScalar(unitKV(e), "AttackAnimationPoint")
+  local bat = field(e, "C_DOTA_BaseNPC", "m_flBaseAttackTime", "f32", 0xd48) or 1.7
+  if bat < 0.1 or bat > 10 then bat = 1.7 end
+  if v and v > 0 and v <= 2 then return v / bat end
+  return nil
+end
+-- KV ProjectileSpeed; nil for melee (callers already guard nil)
+function NPC.GetAttackProjectileSpeed(e)
+  local v = kvScalar(unitKV(e), "ProjectileSpeed")
+  if v and v > 0 then return v end
+  return nil
+end
+-- physical armour. VERIFIED LIVE 22.11 against the HUD stats panel:
+--   Weaver lvl10: HUD armour = 8; m_flPhysicalArmorValue = 1.0, agility = 48.
+--   1.0 + 48 * 0.14 = 7.72 -> HUD 8. So the client field holds armour WITHOUT the
+--   agility contribution (base + bonus) and the hero's agility part must be added
+--   back. Before this fix the multiplier was 0.943 (armour 1) instead of 0.676
+--   (armour 8): every incoming/outgoing physical hit was mispriced, which made the
+--   bot over-estimate incoming damage and refuse every fight (heroDamage stayed 0).
+--   (no chunk-local constant here: api.lua is at LuaJIT's 200-local limit)
+function NPC.GetArmorValueTotal(e)
+  local a = field(e, "C_DOTA_BaseNPC", "m_flPhysicalArmorValue", "f32", 0x16a4) or 0
+  if Entity.IsHero(e) then
+    a = a + (field(e, "C_DOTA_BaseNPC_Hero", "m_flAgilityTotal", "f32", 0x1b78) or 0) * 0.14
+  end
+  return a
+end
+-- white (main) armour: agility part + the unit's KV base armour
+function NPC.GetPhysicalArmorMainValue(e)
+  local agi = 0
+  if Entity.IsHero(e) then
+    agi = (field(e, "C_DOTA_BaseNPC_Hero", "m_flAgilityTotal", "f32", 0x1b78) or 0) * 0.14
+  end
+  return agi + (kvScalar(unitKV(e), "ArmorPhysical") or 0)
+end
+-- Umbrella: GetPhysicalArmorValue(npc[, excludeWhiteArmor=true]) — the field holds
+-- non-agility armour, so excludeWhiteArmor=false adds the white (agility+base) part.
+function NPC.GetPhysicalArmorValue(e, excludeWhiteArmor)
+  local a = field(e, "C_DOTA_BaseNPC", "m_flPhysicalArmorValue", "f32", 0x16a4) or 0
+  if excludeWhiteArmor == false then a = a + NPC.GetPhysicalArmorMainValue(e) end
+  return a
+end
+-- physical damage multiplier: 1 - 0.06A/(1+0.06A) for A>=0, 1 - 0.06A/(1-0.06|A|)
+-- for negative armour (the old single-branch formula understated amplification).
+function NPC.GetArmorDamageMultiplier(e)
+  local a = NPC.GetArmorValueTotal(e)
+  if a == 0 then return 1 end
+  if a > 0 then return 1 - (0.06 * a) / (1 + 0.06 * a) end
+  return 1 - (0.06 * a) / (1 - 0.06 * math.abs(a))
+end
+-- m_flMagicalResistanceValue holds the unit's BASE magic resistance in percent
+-- (25 for heroes, 0 for creeps). Verified live 22.11: HUD showed 30% while the
+-- field read 25 -> the extra 5% comes from items/buffs, i.e. modifier-derived and
+-- therefore NOT reachable without GetModifierProperty (blocker B-2). Documented
+-- approximation: bonus magic resistance is not included.
+function NPC.GetMagicalArmorDamageMultiplier(e)
+  local r = field(e, "C_DOTA_BaseNPC", "m_flMagicalResistanceValue", "f32", 0x16a8) or 0
+  if r < 0 then r = 0 elseif r > 100 then r = 100 end
+  return 1 - r / 100
+end
+-- Umbrella GetMagicalArmorValue returns the resistance VALUE in percent.
+function NPC.GetMagicalArmorValue(e)
+  local r = field(e, "C_DOTA_BaseNPC", "m_flMagicalResistanceValue", "f32", 0x16a8) or 0
+  if r < 0 then r = 0 elseif r > 100 then r = 100 end
+  return r
+end
+function NPC.GetBountyXP(e)
+  local v = field(e, "C_DOTA_BaseNPC", "m_iXPBounty", "i32", 0x17cc) or 0
+  if v <= 0 then v = field(e, "C_DOTA_BaseNPC", "m_iXPBountyExtra", "i32", 0x17d0) or 0 end
+  return v
+end
+function NPC.GetGoldBountyMin(e) return field(e, "C_DOTA_BaseNPC", "m_iGoldBountyMin", "i32", 0x17d4) or 0 end
+function NPC.GetGoldBountyMax(e) return field(e, "C_DOTA_BaseNPC", "m_iGoldBountyMax", "i32", 0x17d8) or 0 end
+-- KNOWN GAP: damage barriers (Pavise/Pipe/etc.) are not exposed by the client
+-- schema; Umbrella returns {physical,magic,all} tables. Returning nil means "no
+-- barrier", which is correct for the common case and matches the guards in the
+-- scripts (`if barriers then ...`); barriers would be missed when present.
+function NPC.GetBarriers(e) return nil end
+-- Base modifier properties only: per-modifier property evaluation needs the
+-- client modifier definitions, which are not in the schema. Values below are the
+-- documented Dota defaults (deny threshold 50%, healing enabled).
+local MOD_PROP_BASE = {
+  [337] = 50,  -- Enum.ModifierFunction.MODIFIER_PROPERTY_CREEP_DENY_PERCENT
+  [178] = 0,   -- Enum.ModifierFunction.MODIFIER_PROPERTY_DISABLE_HEALING
+}
+function NPC.GetModifierProperty(e, property)
+  local v = property and MOD_PROP_BASE[property]
+  if v ~= nil then return v end
+  return 0
+end
+-- state -> keyword table for attributing active modifier states to buff durations.
+-- Approximation: the client schema has no per-buff state bitmask, so common
+-- control modifiers are matched by name and otherwise the newest buff's
+-- remaining duration is used (capped at 8s).
+local STATE_KEYWORDS = {
+  [0] = { "root", "entangle", "frostbite", "ensnare" },        -- ROOTED
+  [1] = { "disarm" },                                           -- DISARMED
+  [3] = { "silence" },                                          -- SILENCED
+  [5] = { "stun", "bash", "sleep", "imprison" },                -- STUNNED
+  [6] = { "hex", "polymorph" },                                 -- HEXED
+  [11] = { "nightmare" },                                       -- NIGHTMARED
+  [19] = { "freeze", "frost" },                                 -- FROZEN
+  [20] = { "command_restricted" },                              -- COMMAND_RESTRICTED
+  [47] = { "fear" },                                            -- FEARED
+  [48] = { "taunt" },                                           -- TAUNTED
+}
+local function stateList(states)
+  local list = {}
+  if type(states) ~= "table" then return list end
+  for k, v in pairs(states) do
+    if type(k) == "number" and v == true then list[#list + 1] = k
+    elseif type(v) == "number" then list[#list + 1] = v
+    elseif type(k) == "number" and v ~= false then list[#list + 1] = k end
+  end
+  return list
+end
+function NPC.GetStatesDuration(e, states, onlyActive)
+  prof("StatesDuration")
+  local out = {}
+  local i = inst(e)
+  if not i then return out end
+  -- m_nUnitState64: schema 0x1330 on 6989; the old 0x12B8 hardcode read pose
+  -- parameters, so every state looked inactive (stun durations always 0).
+  local mask = rdb(i, offOfFb("C_DOTA_BaseNPC", "m_nUnitState64", 0x1330), "u64") or 0
+  local buffs = buffObjects(e)
+  local now = GameRules.GetGameTime()
+  for _, state in ipairs(stateList(states)) do
+    local active = math.floor(mask / 2 ^ (state % 64)) % 2 == 1
+    if onlyActive == false or active then
+      local dur = 0
+      if active then
+        local keys = STATE_KEYWORDS[state]
+        if keys then
+          for _, obj in ipairs(buffs) do
+            local nm = buffName(obj)
+            if nm then
+              for _, key in ipairs(keys) do
+                if nm:find(key, 1, true) then
+                  local left = buffRemaining(obj)
+                  if left > dur then dur = left end
+                  break
+                end
+              end
+            end
+          end
+        end
+        if dur == 0 then
+          for _, obj in ipairs(buffs) do
+            local cre = rdb(obj, 0x54, "f32")
+            local left = buffRemaining(obj)
+            if cre and now > 0 and (now - cre) <= 1.5 and left > dur then dur = left end
+          end
+          if dur > 8 then dur = 8 end
+        end
+      end
+      out[state] = dur
+    end
+  end
+  return out
+end
+-- Turn rate from KV (MovementTurnRate, default 0.5 = 3000 deg/s); time to turn
+-- through |angle| degrees. Angles come from the scene-node abs rotation.
+local function turnRateOf(e)
+  local r = kvScalar(unitKV(e), "MovementTurnRate")
+  if not r or r <= 0 then r = 0.5 end
+  return r
+end
+local function angleDiffDeg(a, b)
+  local d = (a - b) % 360
+  if d > 180 then d = d - 360 end
+  return d
+end
+function NPC.GetTimeToFacePosition(e, pos)
+  if type(pos) ~= "table" then return 0 end
+  local x, y = origin(e)
+  if not x then return 0 end
+  local tx = tonumber(pos.x or pos[1]) or 0
+  local ty = tonumber(pos.y or pos[2]) or 0
+  local dx, dy = tx - x, ty - y
+  if dx * dx + dy * dy < 1 then return 0 end
+  local rot = Entity.GetRotation(e)
+  local yaw = rot and rot.yaw or 0
+  local want = math.deg(math.atan2(dy, dx))
+  local diff = math.abs(angleDiffDeg(yaw, want))
+  local t = diff / (turnRateOf(e) * 6000)
+  if t < 0 then t = 0 elseif t > 0.5 then t = 0.5 end
+  return t
+end
+function NPC.GetTimeToFace(e, target)
+  if not target then return 0 end
+  local p = Entity.GetAbsOrigin(target)
+  return NPC.GetTimeToFacePosition(e, p)
+end
+-- FindFacingNPC(npc, ignoreNpc, teamType(TEAM_ENEMY=0/TEAM_FRIEND=1/TEAM_BOTH=2),
+--               maxAngleDeg, maxDistance)
+function NPC.FindFacingNPC(e, ignoreNpc, teamType, angle, distance)
+  local x, y = origin(e)
+  if not x then return nil end
+  local rot = Entity.GetRotation(e)
+  local yaw = math.rad(rot and rot.yaw or 0)
+  local fx, fy = math.cos(yaw), math.sin(yaw)
+  local maxD = tonumber(distance) or 0
+  if maxD <= 0 then maxD = 100000 end
+  local maxCos = -1
+  if tonumber(angle) and tonumber(angle) > 0 then
+    maxCos = math.cos(math.rad(tonumber(angle)))
+  end
+  -- AI-21 safe variant: prefer the synthesizer's observed attack target (the
+  -- aim of the unit's last detected swing) over the yaw cone, which misses when
+  -- replicated yaw lags the swing. Lifetime safety: the loader invalidates
+  -- records on OnEntityDestroy; here we still gate on readable(idn,0x20) and a
+  -- live instance (>0x10000) BEFORE designer()/origin(), plus a 1.5s freshness
+  -- window and the same team/alive/range checks as the geometric path. FFI AVs
+  -- are not catchable by pcall, so a dead idn must never reach those reads.
+  local synT = rawget(_G, "SYN_attackTargets")
+  local eix = entIndex(e)
+  local rec = synT and eix > 0 and synT[eix] or nil
+  if rec and rec.idn and rec.idn ~= e and rec.idn ~= ignoreNpc then
+    local now = GameRules.GetGameTime()
+    if now - (rec.at or -999) <= 1.5 then
+      local idn = rec.idn
+      if readable(idn, 0x20) then
+        local i = inst(idn)
+        if i and i > 0x10000 then
+          local dn = designer(idn)
+          if dn:find("npc_dota") and not dn:find("npc_dota_ward") and isAlive(idn)
+            and teamMatches(e, idn, teamType) then
+            local tx, ty = origin(idn)
+            if tx and (tx ~= 0 or ty ~= 0) then
+              local dx, dy = tx - x, ty - y
+              local d = math.sqrt(dx * dx + dy * dy)
+              if d <= maxD and d > 0.1 then return idn end
+            end
+          end
+        end
+      end
+    end
+  end
+  local best, bestD = nil, math.huge
+  for idn in entity.iter() do
+    if idn ~= ignoreNpc and idn ~= e then
+      local dn = designer(idn)
+      if dn:find("npc_dota") and not dn:find("npc_dota_ward") and isAlive(idn)
+        and teamMatches(e, idn, teamType) then
+        local tx, ty = origin(idn)
+        if tx then
+          local dx, dy = tx - x, ty - y
+          local d = math.sqrt(dx * dx + dy * dy)
+          if d <= maxD and d > 0.1 then
+            local dot = (dx * fx + dy * fy) / d
+            if dot >= maxCos and d < bestD then best, bestD = idn, d end
+          end
+        end
+      end
+    end
+  end
+  return best
+end
+function NPC.IsLinkensProtected(e)
+  -- approximation: the spell-block state is not networked separately; match the
+  -- Linken's/Sphere modifiers by name
+  for _, obj in ipairs(buffObjects(e)) do
+    local nm = buffName(obj)
+    if nm and (nm:find("sphere", 1, true) or nm:find("linken", 1, true)) then return true end
+  end
+  return false
+end
+function NPC.IsMirrorProtected(e)
+  for _, obj in ipairs(buffObjects(e)) do
+    local nm = buffName(obj)
+    if nm and nm:find("mirror_shield", 1, true) then return true end
+  end
+  return false
+end
+function NPC.IsMeepoClone(e) return (field(e, "C_DOTA_BaseNPC", "m_bIsClone", "u8", 0xd2c) or 0) == 1 end
+function NPC.IsTormentor(e) return designer(e):find("tormentor") ~= nil end
+-- TEMP (2026-11-20): the schema byte 0x17A8 reads 1 for every live lane creep, so
+-- the whole scan filtered every unit out (ctx.creeps/enemies/allies were empty).
+-- Return false and rely on IsAlive/lifeState instead.
+function NPC.IsWaitingToSpawn(e) return false end
+
+-- Hero / Heroes -----------------------------------------------------------
+-- C_DOTA_BaseNPC_Hero offsets from dumper/dota2_dump/client.dll.hpp (this build).
+local Hero = {}
+function Hero.GetPlayerID(e) return field(e, "C_DOTA_BaseNPC_Hero", "m_iPlayerID", "i32", 0x1bf0) or 0 end
+function Hero.GetCurrentXP(e)
+  prof("GetCurrentXP") return field(e, "C_DOTA_BaseNPC_Hero", "m_iCurrentXP", "i32", 0x1b4c) or 0 end
+function Hero.GetStrength(e) return math.floor(field(e, "C_DOTA_BaseNPC_Hero", "m_flStrengthTotal", "f32", 0x1b74) or 0) end
+function Hero.GetAgility(e) return math.floor(field(e, "C_DOTA_BaseNPC_Hero", "m_flAgilityTotal", "f32", 0x1b78) or 0) end
+function Hero.GetIntellect(e) return math.floor(field(e, "C_DOTA_BaseNPC_Hero", "m_flIntellectTotal", "f32", 0x1b7c) or 0) end
+function Hero.GetAbilityPoints(e) return field(e, "C_DOTA_BaseNPC_Hero", "m_iAbilityPoints", "i32", 0x1b50) or 0 end
+-- GameTime_t of respawn; can be < current game time when the hero is alive (doc)
+function Hero.GetRespawnTime(e) return field(e, "C_DOTA_BaseNPC_Hero", "m_flRespawnTime", "f32", 0x1b60) or 0 end
+function Hero.GetPrimaryAttribute(e)
+  return field(e, "C_DOTA_BaseNPC_Hero", "m_iPrimaryAttribute", "i32", 0x1c14) or 0
+end
+-- C_DOTA_BaseNPC_Hero::m_iRecentDamage 0x1B28 (hpp client.dll.hpp) is hero-only:
+-- reading it on a creep scope lands on an unrelated field (probe v4: 2059206657).
+-- Guard scope + plausible range, log once if the range check ever trips.
+local recentDmgWarned = false
+function Hero.GetRecentDamage(e)
+  prof("GetRecentDamage")
+  if not Entity.IsHero(e) then return 0 end
+  local v = field(e, "C_DOTA_BaseNPC_Hero", "m_iRecentDamage", "i32", 0x1bb0)
+  if v == nil then return 0 end
+  if v < 0 or v > 1000000 then
+    if not recentDmgWarned then
+      recentDmgWarned = true
+      log("[api] GetRecentDamage out-of-range value " .. tostring(v) .. " (hero-only guard active) -> 0")
+    end
+    return 0
+  end
+  return v
+end
+function Hero.GetReplicatingOtherHeroModel(e)
+  local h = field(e, "C_DOTA_BaseNPC_Hero", "m_hReplicatingOtherHeroModel", "u32", 0x1c04)
+  -- CHandle sentinel fix: real heroes carry INVALID (0xFFFFFFFF -> nil); illusions/clones
+  -- carry a valid high-serial handle. Consumers require `... == nil` as the real-hero
+  -- discriminator (Self Play.lua:280, creep_block:369, fights:111, lane_rules:9/20,
+  -- strategy:10, teamplay:27, tower_safety:12).
+  if not h or h == 0 or h == 0xFFFFFFFF then return nil end
+  return entByHandle(h)
+end
+-- last-visible/maphack tracking: refresh the cache whenever the hero is visible
+-- (IsDormant false == visible to local player, see Umbrella doc); the returned
+-- time/pos are the last moment the hero was seen. Approximation: the cache is
+-- updated on API calls only (no per-tick hook here), so between calls the "last
+-- visible" time can lag by up to one tick — documented.
+local heroVis = {}
+local function visTick(e)
+  local ix = entIndex(e)
+  if ix <= 0 then return nil end
+  local rec = heroVis[ix]
+  if not Entity.IsDormant(e) then
+    local x, y, z = origin(e)
+    rec = { x = x, y = y, z = z, time = GameRules.GetGameTime() }
+    heroVis[ix] = rec
+  end
+  return rec
+end
+function Hero.GetLastVisibleTime(e) local r = visTick(e); return r and r.time or nil end
+function Hero.GetLastMaphackPos(e)
+  local r = visTick(e)
+  if not r then return nil end
+  return mathx.Vector(r.x, r.y, r.z)
+end
+-- Enum.TalentTypes are bit flags (TALENT_1=1, TALENT_2=2, TALENT_3=4 ...):
+-- TALENT_N -> ability slot 5+N for the talents the client exposes (library order
+-- left/right per level bracket). Learned == that ability's level > 0.
+local TALENT_SLOT = {
+  [1] = 6, [2] = 7, [4] = 8, [8] = 9, [16] = 10, [32] = 11, [64] = 12, [128] = 13,
+}
+function Hero.TalentIsLearned(e, talent)
+  local slot = talent and TALENT_SLOT[tonumber(talent)]
+  if not slot then return false end
+  local a = abilityAt(e, slot)
+  if not a then return false end
+  return (Ability.GetLevel(a) or 0) > 0
+end
+
+local Heroes = {}
+local heroesAllCache, heroesAllAt = {}, 0
+local function arrCopy(t)
+  local o = {}
+  for i = 1, #t do o[i] = t[i] end
+  return o
+end
+function Heroes.GetAll()
+  prof("Heroes.GetAll")
+  local now = os.clock()
+  if now - heroesAllAt < 0.5 then return arrCopy(heroesAllCache) end
+  heroesAllAt = now
+  local out = {}
+  for idn in entity.iter() do
+    local dn = designer(idn)
+    if dn:find("npc_dota_hero_") and not dn:find("announcer") then out[#out + 1] = idn end
+  end
+  heroesAllCache = out
+  -- copy: callers are script code and must not mutate the cache (#heroes sorting etc.)
+  return arrCopy(out)
+end
+local heroesLocalCache = { at = 0, idn = nil }
+function Heroes.GetLocal()
+  local now = os.clock()
+  local c = heroesLocalCache
+  if c.idn and now - c.at < 0.5 then
+    if inst(c.idn) and designer(c.idn) ~= "" then return c.idn end
+    c.idn = nil
+  end
+  local h = entity.getLocalHero()
+  local idn = h and h.identity or nil
+  if idn then heroesLocalCache.idn, heroesLocalCache.at = idn, now end
+  return idn
+end
+
+-- Player / Players --------------------------------------------------------
+-- Contract (D:\hake\lotus\umbrella_api\player.md):
+--   Player.GetTeamPlayer(p) -> DataTeamPlayer_t fields  (gold/xp/lasthits/...)
+--   Player.GetTeamData(p)   -> PlayerResourcePlayerTeamData_t fields
+--                              {selected_hero_id,kills,assists,deaths,streak,
+--                               respawnTime,selected_hero_variant,
+--                               lane_selection_flags,last_buyback_time}
+-- Data sources this build (hpp-verified):
+--   DataTeamPlayer_t            stride 0x12A0  in C_DOTA_DataNonSpectator::m_vecDataTeam @0x5F0
+--   PlayerResourcePlayerTeamData_t stride 0x238 in C_DOTA_PlayerResource::m_vecPlayerTeamData @0x608
+-- The dota_data_radiant/dire entity is present in the identity list (5 records
+-- each, verified live), while C_DOTA_PlayerResource is not guaranteed to be an
+-- identity-list entity on this build, so it is located by pointer scan (cached).
+local gamerulesRaw -- defined in the GameRules section below
+local Player, Players -- defined below, forward-declared for the helpers here
+-- hero KV (npc_heroes) — HeroID lookup fallback used by Player.GetTeamData
+local _heroKV
+local function heroKV()
+  if _heroKV == nil then
+    local ok, x = pcall(require, "xhelpers")
+    local kv = (ok and x and x.xkv and x.xkv:GetKV("npc_heroes")) or {}
+    _heroKV = kv.DOTAAbilities or kv
+  end
+  return _heroKV
+end
+local PR_STRIDE = 0x238       -- PlayerResourcePlayerTeamData_t size (hpp)
+local DTP_STRIDE = 0x12A0     -- DataTeamPlayer_t size (hpp 21.11: was 0x12F0 on old build).
+                              -- VERIFY live for slot>0 (local player slot 0 is stride-independent).
+local PR_OFF_TEAMDATA, PR_OFF_PLAYERDATA = 0x608, 0x670
+local PRC = { ptr = nil, at = 0, logged = false }
+-- C_DOTA_PlayerResource locator. There is no designer name for it in this build's
+-- identity list, so it is identified purely by its two embedded network vectors:
+--   m_vecPlayerTeamData @0x608  (C_UtlVectorEmbeddedNetworkVar<PlayerResourcePlayerTeamData_t>,
+--                                count @+0, data ptr @+8, element stride 0x238 = hpp class size)
+--   m_vecPlayerData     @0x670  (same shape, PlayerResourcePlayerData_t stride 0xF0)
+-- Strong validation (probe v4 showed the old weak scan accepted a random object):
+-- counts must match, every m_playerIDToPlayer[pid] @0x760 must resolve to a
+-- dota_player_controller, and all team-data rows must be range-sane.
+-- Refs: dumper/dota2_dump/client.dll.hpp:20745 (m_vecPlayerTeamData),
+-- :20751 (m_playerIDToPlayer), :17837 (PlayerResourcePlayerTeamData_t, size 0x238).
+local PR_MAXCNT = 24
+local function prValidate(p)
+  if not p or p < 0x1000000 or not readable(p, 0x7A0) then return nil end
+  local cnt = rdb(p, PR_OFF_TEAMDATA, "i32")
+  local pcnt = rdb(p, PR_OFF_PLAYERDATA, "i32")
+  if not (cnt and cnt >= 3 and cnt <= PR_MAXCNT and pcnt == cnt) then return nil end
+  local td = rdb(p, PR_OFF_TEAMDATA + 8, "ptr")
+  local pd = rdb(p, PR_OFF_PLAYERDATA + 8, "ptr")
+  if not (td and pd and readable(td, cnt * PR_STRIDE) and readable(pd, cnt * 0xF0)) then return nil end
+  local ctrlHits, sane = 0, 0
+  for pid = 0, cnt - 1 do
+    local h = rdb(p, 0x760 + pid * 4, "u32")
+    if h then
+      local ctrl = entByHandle(h)
+      if ctrl and designer(ctrl):find("player_controller") then ctrlHits = ctrlHits + 1 end
+    end
+    local rec = td + pid * PR_STRIDE
+    local k = rdb(rec, 0xA8, "i32")
+    local a = rdb(rec, 0xAC, "i32")
+    local d = rdb(rec, 0xB0, "i32")
+    local l = rdb(rec, 0xB8, "i32")
+    if k and a and d and l and k >= 0 and k <= 9999 and a >= 0 and a <= 9999
+      and d >= 0 and d <= 9999 and l >= 0 and l <= 30 then
+      sane = sane + 1
+    end
+  end
+  if ctrlHits < 2 or sane < cnt then return nil end
+  return cnt
+end
+local function prFindByEntityScan()
+  -- the resource is an entity-list object (probe v4: an instance with cnt608==cnt670==10)
+  for idn in entity.iter() do
+    local i = inst(idn)
+    if i and prValidate(i) then return i end
+  end
+  return nil
+end
+local function prFindByPointerScan()
+  local gr = gamerulesRaw and gamerulesRaw()
+  -- build the base list without nil holes (ipairs stops at the first nil)
+  local bases = {}
+  if gr then
+    bases[#bases + 1] = gr
+    local proxy = rdb(gr, 0x08, "ptr")
+    if proxy then bases[#bases + 1] = proxy end
+  end
+  local lc = orders.localController()
+  if lc then bases[#bases + 1] = lc end
+  for _, base in ipairs(bases) do
+    if base and base >= 0x10000 and readable(base, 8) then
+      for o = 0, 0x300, 8 do
+        local cand = rdb(base, o, "ptr")
+        if cand and prValidate(cand) then return cand end
+      end
+    end
+  end
+  return nil
+end
+local function playerResource()
+  local now = os.clock()
+  local c = PRC
+  if c.ptr then
+    if prValidate(c.ptr) then return c.ptr end
+    c.ptr = nil
+  end
+  if now - c.at < 2.0 then return nil end     -- negative cache 2s
+  c.at = now
+  local p = prFindByEntityScan() or prFindByPointerScan()
+  if p then
+    c.ptr = p
+    local n = prValidate(p) or 0
+    log(string.format("[api] C_DOTA_PlayerResource located @0x%X validated players=%d", p, n))
+  elseif not c.logged then
+    c.logged = true
+    log("[api] C_DOTA_PlayerResource not found; GetTeamData uses derived fallbacks")
+  end
+  return p
+end
+-- index of a player inside m_vecPlayerTeamData (pid for 10/24-entry vectors;
+-- pid%5 for a 5-entry per-team vector), then stride to the record
+local function playerTeamRecordPtr(pr, pid)
+  local cnt = rdb(pr, PR_OFF_TEAMDATA, "i32")
+  local data = rdb(pr, PR_OFF_TEAMDATA + 8, "ptr")
+  if not (cnt and data and pid and pid >= 0) then return nil end
+  local idx
+  if cnt >= 10 then idx = pid else idx = pid % 5 end
+  if idx < 0 or idx >= cnt then return nil end
+  local rec = data + idx * PR_STRIDE
+  if not readable(rec, 0x200) then return nil end
+  return rec, idx
+end
+-- DataTeamPlayer_t record for a player, resolved through the dota_data_<team> entity
+local dtCache = {}
+local function dataTeamEntity(team)
+  local want = (team == 3) and "dota_data_dire" or "dota_data_radiant"
+  for idn in entity.iter() do
+    local dn = designer(idn)
+    if dn == want then return inst(idn) end
+  end
+  -- custom teams: accept any dota_data_* whose name matches the side
+  for idn in entity.iter() do
+    local dn = designer(idn)
+    if dn:find("^dota_data_") then
+      if (team == 3) == (dn:find("dire") ~= nil) then return inst(idn) end
+    end
+  end
+  return nil
+end
+local function teamSlotOf(p, pid, team)
+  local pr = playerResource()
+  if pr then
+    local rec = playerTeamRecordPtr(pr, pid)
+    local slot = rec and rdb(rec, 0x108, "i32")
+    if slot and slot >= 0 and slot < 5 then return slot end
+  end
+  return pid % 5
+end
+local function dataTeamRecord(p)
+  local pid = Player.GetPlayerID(p)
+  if pid < 0 or pid > 23 then return nil end
+  local team = Entity.GetTeamNum(p)
+  if team == 0 then
+    local h = entity.getLocalHero()
+    team = h and h.team or 2
+  end
+  local slot = teamSlotOf(p, pid, team)
+  local key = tostring(team) .. ":" .. tostring(slot)
+  local now = os.clock()
+  local cached = dtCache[key]
+  if cached and now - cached.at < 0.25 and readable(cached.rec, 0x200) then return cached.rec end
+  local dti = dataTeamEntity(team)
+  if not dti then return nil end
+  local count = rdb(dti, 0x5F0, "i32")
+  local ptr = rdb(dti, 0x5F0 + 8, "ptr")
+  if not (ptr and ptr >= 0x10000 and count and count >= 1 and count <= 24) then return nil end
+  if slot >= count then return nil end
+  local rec = ptr + slot * DTP_STRIDE
+  if not readable(rec, 0x200) then return nil end
+  dtCache[key] = { rec = rec, at = now }
+  return rec
+end
+-- typed field readers over a DataTeamPlayer_t record
+local function dti(rec, off, def)
+  if not rec then return def or 0 end
+  local v = rdb(rec, off, "i32")
+  if v == nil then return def or 0 end
+  return v
+end
+local function dtf(rec, off, def)
+  if not rec then return def or 0 end
+  local v = rdb(rec, off, "f32")
+  if v == nil then return def or 0 end
+  return v
+end
+-- handle fields -> identity
+local function handleEnt(h)
+  -- CHandle sentinel fix (feeds Player.GetAssignedHero, GetQueryUnit, team-data handles;
+  -- consumers Self Play.lua:272 and talents.lua:4)
+  if not h or h == 0 or h == 0xFFFFFFFF then return nil end
+  return entByHandle(h)
+end
+
+Player = {}
+function Player.GetPlayerID(p)
+  prof("GetPlayerID")
+  local i = inst(p)
+  if not i then return -1 end
+  local v = rdb(i, offOfFb("C_DOTAPlayerController", "m_nPlayerID", 0x910), "i32")
+  if v == nil or v < 0 or v > 23 then return -1 end
+  return v
+end
+function Player.GetPlayerSlot(p)
+  local pr = playerResource()
+  local pid = Player.GetPlayerID(p)
+  local prd = pr and rdb(pr, PR_OFF_PLAYERDATA, "i32") and rdb(pr, PR_OFF_PLAYERDATA + 8, "ptr")
+  if prd and pid >= 0 then
+    local cnt = rdb(pr, PR_OFF_PLAYERDATA, "i32")
+    if cnt and pid < cnt then
+      local rec = prd + pid * 0xF0
+      local slot = rdb(rec, 0xD0, "i32")
+      if slot then return slot end
+    end
+  end
+  return pid
+end
+function Player.GetPlayerTeamSlot(p)
+  local pid = Player.GetPlayerID(p)
+  if pid < 0 then return -1 end
+  return teamSlotOf(p, pid, Entity.GetTeamNum(p))
+end
+function Player.GetAssignedHero(p)
+  local i = inst(p)
+  if not i then return nil end
+  local h = handleEnt(rdb(i, offOfFb("C_DOTAPlayerController", "m_hAssignedHero", 0x914), "u32"))
+  if h then return h end
+  -- fallback: hero whose m_iPlayerID matches this controller's player id
+  local pid = Player.GetPlayerID(p)
+  if pid < 0 then return nil end
+  for idn in entity.iter() do
+    if designer(idn):find("npc_dota_hero_") then
+      local hi = inst(idn)
+      if hi and rdb(hi, offOfFb("C_DOTA_BaseNPC_Hero", "m_iPlayerID", 0x1bf0), "i32") == pid then return idn end
+    end
+  end
+  return nil
+end
+function Player.GetName(p)
+  local pr = playerResource()
+  local pid = Player.GetPlayerID(p)
+  if pr and pid >= 0 then
+    local namePtr = rdb(pr, 0x960 + pid * 8, "ptr")   -- m_iszName[64] (CUtlSymbolLarge)
+    local s = cstrAt(namePtr, 64)
+    if s and #s > 0 then return s end
+  end
+  local i = inst(p)
+  return i and cstrAt(rdb(i, offOfFb("CBasePlayerController", "m_iszPlayerName", 0x6E4), "ptr"), 64) or ""
+end
+function Player.GetPlayerData(p, output)
+  local out = output or {}
+  local valid, fullyJoined, fakeClient, connectionState, steamid = false, false, false, 0, 0
+  local pr = playerResource()
+  local pid = Player.GetPlayerID(p)
+  if pr and pid >= 0 then
+    local cnt = rdb(pr, PR_OFF_PLAYERDATA, "i32")
+    local prd = rdb(pr, PR_OFF_PLAYERDATA + 8, "ptr")
+    if cnt and prd and pid < cnt then
+      local rec = prd + pid * 0xF0
+      valid = (rdb(rec, 0x30, "u8") or 0) ~= 0
+      fullyJoined = (rdb(rec, 0x44, "u8") or 0) ~= 0
+      fakeClient = (rdb(rec, 0x45, "u8") or 0) ~= 0
+      connectionState = rdb(rec, 0x54, "i32") or 0
+      steamid = rdb(rec, 0x58, "u64") or 0
+      out.PlayerName = cstrAt(rdb(rec, 0x38, "ptr"), 64) or ""
+      out.PlusSubscriber = (rdb(rec, 0x8C, "u8") or 0) ~= 0
+      out.MVPLastGame = (rdb(rec, 0x8D, "u8") or 0) ~= 0
+    end
+  end
+  out.valid, out.fullyJoined, out.fakeClient = valid, fullyJoined, fakeClient
+  out.connectionState, out.steamid = connectionState, steamid
+  out.ProName = out.ProName or ""
+  return out
+end
+function Player.GetTotalGold(p)
+  prof("GetTotalGold")
+  local rec = dataTeamRecord(p)
+  return dti(rec, 0x30) + dti(rec, 0x34)
+end
+local function orderIndex(v)
+  if v == nil then return 0 end
+  -- small numbers are item/ability IDs; entity pointers map to their game index
+  if type(v) == "number" then
+    if v >= 0 and v < 0x100000 then return v end
+    return entIndex(v)
+  end
+  return entIndex(v)
+end
+function Player.PrepareUnitOrders(player, orderType, target, position, ability, orderIssuer, issuerNpc, queue, showEffects)
+  -- crash guard (AI-14): attack orders on a dead/invalid entity make the game AV
+  -- (null-target virtual call, call [rax+398h] rax=0). Validate the target first.
+  local ot = tonumber(orderType) or 0
+  if (ot == 4 or ot == 5) and target ~= nil and type(target) ~= "number" then
+    if not Entity.IsEntity(target) or not Entity.IsAlive(target) then
+      olog("PUO blocked: dead/invalid attack target type=" .. ot)
+      return false
+    end
+  end
+  local v = vec3(position)
+  local iss = asInstance(issuerNpc) or asInstance(Heroes.GetLocal())
+  olog(string.format("PUO type=%s tgt=%s abil=%s unit=%s", tostring(orderType), tostring(orderIndex(target)), tostring(orderIndex(ability)), designer(issuerNpc)))
+  local ok, err = orders.prepare(orderType, orderIndex(target), v, orderIndex(ability), iss, queue == true, showEffects == true)
+  if not ok and err then log("[order] PUO fail:", err) end
+  return ok
+end
+function Player.AttackTarget(player, issuerNpc, target, queue)
+  if target == nil then target, issuerNpc = issuerNpc, Heroes.GetLocal() end
+  if target ~= nil and type(target) ~= "number" and (not Entity.IsEntity(target) or not Entity.IsAlive(target)) then
+    olog("AttackTarget blocked: dead/invalid target")
+    return false
+  end
+  olog("Attack " .. designer(issuerNpc) .. " -> " .. designer(target))
+  return orders.prepare(orders.ORDER.DOTA_UNIT_ORDER_ATTACK_TARGET or 4, entIndex(target), nil, 0, asInstance(issuerNpc), queue == true, false)
+end
+function Player.HoldPosition(player, issuerNpc, queue)
+  local info = debug.getinfo(4, "Sl")
+  olog("Hold " .. designer(issuerNpc) .. (info and string.format(" @ %s:%d", (info.short_src or ""):match("[^\\]+$") or "?", info.currentline) or ""))
+  return orders.prepare(orders.ORDER.DOTA_UNIT_ORDER_HOLD_POSITION or 10, 0, nil, 0, asInstance(issuerNpc or Heroes.GetLocal()), queue == true, false)
+end
+-- Player.GetSelectedUnits: C_DOTAPlayerController::m_nSelectedUnits @0x9C8
+-- (CUtlVector<CEntityIndex>: count@0, ptr@8) -> entity identities
+function Player.GetSelectedUnits(p)
+  local i = inst(p)
+  local out = {}
+  if not i then return out end
+  local cnt = rdb(i, 0x9C8, "i32")
+  local ptr = rdb(i, 0x9C8 + 8, "ptr")
+  if not (cnt and ptr and cnt > 0 and cnt <= 64 and readable(ptr, cnt * 4)) then return out end
+  local map = indexMap()
+  for n = 0, cnt - 1 do
+    local ix = tonumber(ffi.cast("int32_t*", ptr + n * 4)[0])
+    local idn = ix and map[ix]
+    if idn then out[#out + 1] = idn end
+  end
+  return out
+end
+function Player.GetQueryUnit(p)
+  local i = inst(p)
+  if not i then return nil end
+  return handleEnt(rdb(i, offOfFb("C_DOTAPlayerController", "m_hQueryUnit", 0x9FC), "u32"))
+end
+-- deaths cannot be read from DataTeamPlayer_t (only from the player resource), so
+-- when the resource is unavailable they are tracked from life-state edges below
+-- and this table is also the approximation source for kills/assists.
+local deathTrack = { at = 0, byPid = {}, alive = {} }
+local function trackDeaths()
+  local now = os.clock()
+  if now - deathTrack.at < 0.2 then return end
+  deathTrack.at = now
+  for _, pl in ipairs(Players.GetAll()) do
+    local pid = Player.GetPlayerID(pl)
+    if pid >= 0 then
+      local h = Player.GetAssignedHero(pl)
+      local alive = h and Entity.IsAlive(h) or nil
+      local prev = deathTrack.alive[pid]
+      if prev == true and alive == false then
+        deathTrack.byPid[pid] = (deathTrack.byPid[pid] or 0) + 1
+      end
+      if alive ~= nil then deathTrack.alive[pid] = alive end
+    end
+  end
+end
+function Player.GetTeamData(p, output)
+  prof("GetTeamData")
+  local out = output or {}
+  local pid = Player.GetPlayerID(p)
+  local pr = playerResource()
+  local rec = pr and pid >= 0 and playerTeamRecordPtr(pr, pid) or nil
+  local hero = Player.GetAssignedHero(p)
+  -- contract fields (umbrella_api/player.md#GetTeamData)
+  out.selected_hero_id = rec and (rdb(rec, 0x98, "i32") or 0) or 0
+  out.kills = rec and (rdb(rec, 0xA8, "i32") or 0) or 0
+  out.assists = rec and (rdb(rec, 0xAC, "i32") or 0) or 0
+  out.deaths = rec and (rdb(rec, 0xB0, "i32") or 0) or 0
+  out.streak = rec and (rdb(rec, 0xB4, "i32") or 0) or 0
+  out.level = rec and (rdb(rec, 0xB8, "i32") or 0) or 0
+  out.respawnTime = rec and (rdb(rec, 0xC0, "i32") or 0) or 0
+  out.selected_hero_variant = rec and (rdb(rec, 0xA0, "i32") or 0) or 0
+  out.lane_selection_flags = rec and (rdb(rec, 0x1D1, "u8") or 0) or 0
+  out.last_buyback_time = rec and (rdb(rec, 0xC4, "f32") or 0) or 0
+  -- fallbacks when the player resource is not present (documented approximations)
+  if not rec then
+    local dt = dataTeamRecord(p)
+    if dt then
+      out.kills = 0
+      for i = 0, 23 do out.kills = out.kills + dti(dt, 0x208 + i * 4) end
+    end
+    trackDeaths()
+    out.deaths = deathTrack.byPid[pid] or 0
+    out.respawnTime = hero and (field(hero, "C_DOTA_BaseNPC_Hero", "m_flRespawnTime", "f32", 0x1b60) or 0) or 0
+    if out.selected_hero_id == 0 and hero then
+      -- hero id by designer name: npc_heroes KV carries HeroID per hero
+      local kv = heroKV()
+      local entry = kv and kv[designer(hero)]
+      if entry then out.selected_hero_id = tonumber(entry.HeroID) or 0 end
+    end
+  end
+  if out.level == 0 and hero then out.level = field(hero, "C_DOTA_BaseNPC", "m_iCurrentLevel", "i32", 0xcfc) or 0 end
+  return out
+end
+-- DataTeamPlayer_t -> the full Team Player Data table documented in
+-- umbrella_api/player.md#GetTeamPlayer (offsets from client.dll.hpp)
+function Player.GetTeamPlayer(p, output)
+  prof("GetTeamPlayer")
+  local out = output or {}
+  local rec = dataTeamRecord(p)
+  local function gi(key, off) out[key] = dti(rec, off) end
+  local function gf(key, off) out[key] = dtf(rec, off) end
+  -- Offsets aligned to the CURRENT build hpp (DataTeamPlayer_t). A new field
+  -- m_iMidasGold was inserted at 0x90, shifting networth/deny/lasthit/etc by +4..+8
+  -- vs the old table (that shift produced garbage score: denies=693..2372, networth=0).
+  -- Source: dumper/dota2_dump/client.dll.hpp namespace DataTeamPlayer_t (21.11.2026).
+  gi("reliable_gold", 0x30);          gi("unreliable_gold", 0x34)
+  gi("starting_position", 0x38);     gi("totalearned_gold", 0x3C)
+  gi("totalearned_xp", 0x40);        gi("shared_gold", 0x44)
+  gi("hero_kill_gold", 0x48);        gi("creep_kill_gold", 0x4C)
+  gi("neutral_kill_gold", 0x54);     gi("courier_gold", 0x58)
+  gi("bounty_gold", 0x5C);           gi("roshan_gold", 0x60)
+  gi("building_gold", 0x64);         gi("other_gold", 0x68)
+  gi("comeback_gold", 0x6C);         gi("experimental_gold", 0x70)
+  gi("experimental2_gold", 0x74);    gi("creepdeny_gold", 0x78)
+  gi("tp_scrolls_purchased", 0x7C);  gf("custom_stats", 0x80)
+  gi("income_gold", 0x84);           gi("ward_kill_gold", 0x88)
+  gi("ability_gold", 0x8C);          gi("networth", 0x94)
+  gi("deny_count", 0x98);            gi("lasthit_count", 0x9C)
+  gi("lasthit_streak", 0xA0);        gi("lasthit_multikill", 0xA4)
+  gi("nearby_creep_death_count", 0xA8); gi("claimed_deny_count", 0xAC)
+  gi("claimed_miss_count", 0xB0);    gi("miss_count", 0xB4)
+  gi("possible_hero_selection", 0xB8); gi("possible_hero_facet_selection", 0xC0)
+  gf("buyback_cooldown_time", 0xC8); gf("buyback_gold_limit_time", 0xCC)
+  gf("buyback_cost_time", 0xD0);     gf("custom_buyback_cooldown", 0xD4)
+  gf("stuns", 0xD8);                 gf("healing", 0xDC)
+  gi("tower_Kills", 0xE4);           gi("roshan_kills", 0xE8)
+  out.camera_target = handleEnt(rdb(rec, 0xEC, "u32"))
+  out.override_selection_entity = handleEnt(rdb(rec, 0xF0, "u32"))
+  gi("observer_wards_placed", 0xF4); gi("sentry_wards_placed", 0xF8)
+  gi("creeps_stacked", 0xFC);        gi("camps_stacked", 0x100)
+  gi("rune_pickups", 0x104);         gi("gold_spent_on_support", 0x108)
+  gf("hero_damage", 0x10C);          gi("wards_purchased", 0x114)
+  gi("wards_destroyed", 0x118);      gi("commands_issued", 0xF90)
+  gi("gold_spent_on_consumables", 0xF94); gi("gold_spent_on_items", 0xF98)
+  gi("gold_spent_on_buybacks", 0xF9C); gi("gold_lost_to_death", 0xFA0)
+  out.is_new_player = (rdb(rec, 0xFA4, "u8") or 0) ~= 0
+  out.is_guide_player = (rdb(rec, 0xFA5, "u8") or 0) ~= 0
+  gi("acquired_madstone", 0xFC8);    gi("current_madstone", 0xFCC)
+  return out
+end
+function Player.GetPlayerNeutralInfo(p)
+  local rec = dataTeamRecord(p)
+  if not rec then return nil end
+  local choices = 0xFD0   -- DataTeamPlayer_t::m_NeutralChoices (hpp 21.11: was 0xFC8)
+  local function arr(base, off)
+    local t = {}
+    for i = 0, 4 do t[#t + 1] = rdb(rec, base + off + i * 4, "i32") or 0 end
+    return t
+  end
+  return {
+    acquired_madstone = dti(rec, 0xFC8),
+    current_madstone = dti(rec, 0xFCC),
+    trinket_choices = arr(choices, 0x08),
+    enhancement_choices = arr(choices, 0xBC),
+    selected_trinkets = arr(choices, 0x170),
+    selected_enhancements = arr(choices, 0x184),
+    times_crafted = arr(choices, 0x198),
+  }
+end
+function Player.IsMuted(p)
+  local i = inst(p)
+  if not i then return false end
+  return (rdb(i, offOfFb("C_DOTAPlayerController", "m_bDisableHUDErrorMessages", 0x958), "u8") or 0) ~= 0
+end
+
+Players = {}
+local playersAllCache, playersAllAt = {}, 0
+function Players.GetAll()
+  prof("Players.GetAll")
+  local now = os.clock()
+  if now - playersAllAt < 0.5 then return arrCopy(playersAllCache) end
+  playersAllAt = now
+  local out = {}
+  for idn in entity.iter() do
+    if designer(idn):find("player_controller") then out[#out + 1] = idn end
+  end
+  playersAllCache = out
+  return arrCopy(out)
+end
+local localCtrlCache = { idn = nil, at = 0 }
+local function isLocalCtrlInstance(i)
+  return (rdb(i, offOfFb("CBasePlayerController", "m_bIsLocalPlayerController", 0x778), "u8") or 0) == 1
+end
+function Players.GetLocal()
+  local now = os.clock()
+  local cache = localCtrlCache
+  -- fast path: previously resolved identity, re-validated by its own local flag
+  -- (orders.localController() does a full entity scan, so it must not run per call)
+  if cache.idn and now - cache.at < 2.0 then
+    local i = inst(cache.idn)
+    if i and isLocalCtrlInstance(i) then return cache.idn end
+    cache.idn = nil
+  end
+  local c = orders.localController()
+  if not c then return nil end
+  for idn in entity.iter() do
+    if entity.instance(idn) == c then
+      cache.idn, cache.at = idn, now
+      return idn
+    end
+  end
+  cache.idn = nil
+  return nil
+end
+
+-- GameRules ---------------------------------------------------------------
+local GameRules = {}
+ffi.cdef[[ unsigned long long GetTickCount64(void); ]]
+local wallStart = tonumber(ffi.C.GetTickCount64()) / 1000.0
+-- client.dll base + gamerules pointer are cached: GameRules.GetGameTime has 80+
+-- call sites per script update and GetModuleHandleA per call was measurable.
+local clientBaseCache
+local grCache = { ptr = nil, at = 0 }
+local function gamerules()
+  if not clientBaseCache then
+    clientBaseCache = tonumber(ffi.cast("uintptr_t", C.GetModuleHandleA("client.dll")))
+    if clientBaseCache == 0 then clientBaseCache = nil; return nil end
+  end
+  local now = os.clock()
+  local c = grCache
+  if c.ptr and now - c.at < 1.0 and readable(c.ptr, 0x100) then return c.ptr end
+  -- dwLocalPlayerController global, build 988312 (0x6219008 on build 987800)
+  local gr = tonumber(ffi.cast("uintptr_t*", clientBaseCache + 0x63E30A0)[0])
+  local real
+  if gr and readable(gr + 0x08, 8) then
+    local proxy = tonumber(ffi.cast("uintptr_t*", gr + 0x08)[0])  -- C_DOTAGamerulesProxy instance
+    if proxy and readable(proxy + 0x5f0, 8) then
+      real = tonumber(ffi.cast("uintptr_t*", proxy + 0x5f0)[0])   -- m_pGameRules -> real C_DOTAGamerules
+    end
+  end
+  if not real or not readable(real, 0x100) then
+    c.ptr, c.at = nil, now
+    return nil
+  end
+  c.ptr, c.at = real, now
+  return real
+end
+-- GameRules.GetGameTime — absolute load-relative game clock. -----------------------------------------------------------------
+-- Scripts compute the in-game timer as GetGameTime() - GetGameStartTime()
+-- (Self Play.lua:346: ctx.clock = ctx.now - GameRules.GetGameStartTime()), so the
+-- returned value MUST share the epoch of C_DOTAGamerules::m_flGameStartTime
+-- (verified live: pregame=146.367, creepspawn=206.367, gamestart=236.367 are all
+-- the same load-relative timebase).
+--
+-- Source selection (never orderStamp/ability-point fields — those are different
+-- timebases and produced the 9072s garbage):
+--   horn : we observed m_flGameStartTime transition while ticking -> exact
+--          anchor: gt = gs + (wall_now - wall_at_transition).
+--   atk  : mid-join, no horn anchor -> max(C_DOTA_BaseNPC::m_flLastAttackTime
+--          0x1440, m_flLastDamageTime 0x143C, schema-resolved) over npc_dota* + 0.25s
+--          (these are GameTime_t in the gamerules epoch; lanes/towers attack constantly).
+--   wall : nothing usable -> wall-clock seconds since this process first saw
+--          GameState==5, offset by gs (approximate, logged once).
+-- Guards: value must be > gs-120 and < gs+6h; monotonic within a match; the
+-- result is frozen after the game ends (state > 5).
+local clockState = {
+  gs = nil, anchorWall = nil, source = nil, lastLog = 0, prevState = nil,
+  lastGt = nil, lastEst = nil, estAt = 0, estWall = nil, firstState5Wall = nil, frozen = nil, warned = {},
+  scans = 0, samples = 0, logScans = 0, logSamples = 0,
+}
+local function clockLog(src, gt, gs, state)
+  local wall = tonumber(ffi.C.GetTickCount64()) / 1000.0
+  local cs = clockState
+  if src ~= cs.source or wall - cs.lastLog > 10 then
+    cs.source = src
+    cs.lastLog = wall
+    local dSamples = cs.samples - cs.logSamples
+    local dScans = cs.scans - cs.logScans
+    cs.logSamples, cs.logScans = cs.samples, cs.scans
+    log(string.format("[clock] src=%s gt=%.2f gs=%.2f state=%s in_game=%.1f samples/10s=%d scans=%d",
+      src, gt, gs, tostring(state), gt - gs, dSamples, dScans))
+  end
+end
+local function clockSanity(v, gs)
+  if not v or v ~= v then return false end
+  if gs and gs > 1 then return v >= gs - 120 and v <= gs + 6 * 3600 end
+  return v > 0 and v < 200000
+end
+-- cached list of npc_dota identities: building it is one full identity walk, but
+-- the clock estimator and the FoW vision helper must not each walk the list at
+-- their own frequency. Rebuilt every 2s (creeps spawn/die, heroes persist).
+local npcIds, npcIdsAt = {}, 0
+local function npcIdentities()
+  local now = os.clock()
+  if now - npcIdsAt > 2.0 then
+    npcIdsAt = now
+    local out = {}
+    for idn in entity.iter() do
+      if designer(idn):find("npc_dota") then out[#out + 1] = idn end
+    end
+    npcIds = out
+  end
+  return npcIds
+end
+local function attackClockSample()
+  local best
+  for _, idn in ipairs(npcIdentities()) do
+    local i = inst(idn)
+    if i then
+      -- schema-first (build 6989: 0x1440/0x143C); the old 0x13C8/0x13C4 hardcodes
+      -- read unrelated fields -> samples=0 -> mid-join clock fell to wall fallback.
+      local a = rdb(i, offOfFb("C_DOTA_BaseNPC", "m_flLastAttackTime", 0x1440), "f32")
+      local d = rdb(i, offOfFb("C_DOTA_BaseNPC", "m_flLastDamageTime", 0x143C), "f32")
+      if a and a > 1 and (not best or a > best) then best = a end
+      if d and d > 1 and (not best or d > best) then best = d end
+    end
+  end
+  return best
+end
+function GameRules.GetGameTime()
+  prof("GetGameTime")
+  local wall = tonumber(ffi.C.GetTickCount64()) / 1000.0
+  profFlush(wall)
+  local gr = gamerules()
+  local cs = clockState
+  local state = 0
+  local gs = 0
+  local paused = false
+  if gr then
+    state = rdb(gr, offOfFb("C_DOTAGamerules", "m_nGameState", 0x7C), "i32") or 0
+    gs = rdb(gr, offOfFb("C_DOTAGamerules", "m_flGameStartTime", 0x594), "f32") or 0
+    -- C_GameRules base class (0x38) carries the authoritative pause flag; the
+    -- in-game HUD clock freezes while paused, so GetGameTime freezes with it and
+    -- the pause duration is added to the wall anchors when the game resumes.
+    paused = (rdb(gr, offOfFb("C_GameRules", "m_bGamePaused", 0x3C), "u8") or 0) ~= 0
+  end
+  if paused then
+    if not cs.paused then
+      cs.paused, cs.pauseWall, cs.pauseGt = true, wall, cs.lastGt or (gs > 1 and gs or 0)
+      log("[clock] game paused (m_bGamePaused=1); clock frozen")
+    end
+    clockLog("paused", cs.pauseGt, cs.gs or gs, state)
+    return cs.pauseGt
+  elseif cs.paused then
+    local dur = wall - (cs.pauseWall or wall)
+    if cs.anchorWall then cs.anchorWall = cs.anchorWall + dur end
+    if cs.estWall then cs.estWall = cs.estWall + dur end
+    if cs.firstState5Wall then cs.firstState5Wall = cs.firstState5Wall + dur end
+    cs.paused, cs.pauseWall, cs.pauseGt = false, nil, nil
+    log(string.format("[clock] game unpaused after %.1fs", dur))
+  end
+  -- track the observed horn transition (0/old -> new value while we are ticking)
+  local prevState = clockState.prevState
+  clockState.prevState = state
+  if not clockState.anchorWall and gs and gs > 1 and state >= 5 and prevState and prevState < 5 then
+    -- loaded in the lobby and watched the match reach GAME_IN_PROGRESS: the horn
+    -- just fired, so this wall instant is 0:00 (error < one tick).
+    clockState.anchorWall, clockState.gs = wall, gs
+    clockState.lastEst, clockState.lastGt, clockState.frozen, clockState.firstState5Wall = nil, nil, nil, nil
+    clockState.pregameWall = nil
+    log(string.format("[clock] anchor: observed state transition <%d -> 5 at gs=%.3f", prevState, gs))
+  end
+  if gs and gs > 1 then
+    if cs.gs == nil or cs.gs ~= gs then
+      if cs.gs == nil then
+        cs.gs = gs
+      elseif math.abs(gs - cs.gs) > 0.01 then
+        cs.gs, cs.anchorWall = gs, wall
+        cs.lastEst, cs.lastGt, cs.frozen, cs.firstState5Wall = nil, nil, nil, nil
+        log(string.format("[clock] anchor: observed m_flGameStartTime transition -> %.3f", gs))
+      end
+    end
+  elseif gs ~= nil then
+    -- pre-game: gamerules exists but the horn has not happened yet
+    if cs.gs ~= nil and cs.gs > 1 then cs.gs, cs.anchorWall = gs, nil end
+    cs.gs = gs
+    cs.frozen, cs.lastEst, cs.lastGt, cs.firstState5Wall = nil, nil, nil, nil
+  end
+  -- post game: freeze at the last value
+  if state > 5 then
+    if cs.frozen then return cs.frozen end
+    if cs.lastGt then cs.frozen = cs.lastGt; return cs.frozen end
+  end
+  -- 1) exact horn-anchored clock
+  if cs.anchorWall and state >= 4 then
+    local gt = cs.gs + (wall - cs.anchorWall)
+    if clockSanity(gt, cs.gs) then
+      if cs.lastGt and gt < cs.lastGt then gt = cs.lastGt end
+      cs.lastGt = gt
+      clockLog("horn", gt, cs.gs, state)
+      return gt
+    end
+  end
+  -- pre-game / menu: no useful clock
+  if state < 5 then
+    -- PRE-GAME FIX (21.11): Umbrella's GetGameTime returns globalvars curtime, which
+    -- is a positive monotonic value during hero-selection/strategy/pre-game. Returning
+    -- -1 here made ctx.now=-1 and froze the bot for the whole pre-match minute (no
+    -- starting buys, no creep-block positioning -> "Wave escaped" at horn). Provide a
+    -- monotonic wall-anchored clock for state>=2 so pre-game timing logic works.
+    if state >= 2 then
+      if not cs.pregameWall then cs.pregameWall = wall end
+      local gt = wall - cs.pregameWall
+      if cs.lastGt and gt < cs.lastGt then gt = cs.lastGt end
+      cs.lastGt = gt
+      clockLog("pregame", gt, gs, state)
+      return gt
+    end
+    if clockState.loggedState ~= state then
+      clockState.loggedState = state
+      log(string.format("[clock] state=%s (no in-game clock yet, gs=%s)", tostring(state), tostring(gs)))
+    end
+    return -1
+  end
+  -- 2) mid-join: attack/damage timestamp estimator. Two independent guards so a
+  -- long script tick can never trigger more than one full entity scan per tick:
+  --   * _G.HAKE_CLOCK_ESTIMATE == 0 (bisect switch from loader) disables it;
+  --   * per-"tick token": loader bumps _G.HAKE_TICK once per loader.tick(); we
+  --     allow at most one scan per token. Without the token we fall back to a
+  --     hard 2s wall TTL. Between samples the anchor advances by wall delta.
+  local allowScan = false
+  if _G.HAKE_CLOCK_ESTIMATE ~= 0 then
+    local token = tonumber(_G.HAKE_TICK)
+    if token then
+      if token ~= cs.lastScanTick then
+        cs.lastScanTick = token
+        allowScan = true
+      end
+    elseif wall - cs.estAt > 2.0 then
+      allowScan = true
+    end
+  end
+  if allowScan then
+    cs.estAt = wall
+    cs.scans = cs.scans + 1
+    local s = attackClockSample()
+    if s and clockSanity(s + 0.25, cs.gs) then
+      cs.samples = cs.samples + 1
+      local cur = nil
+      if cs.lastEst then cur = cs.lastEst + (wall - (cs.estWall or wall)) end
+      local cand = s + 0.25
+      if cur and cand < cur then cand = cur end     -- monotonic
+      cs.lastEst, cs.estWall = cand, wall
+    end
+  end
+  if cs.lastEst then
+    local gt = cs.lastEst + (wall - (cs.estWall or wall))
+    if cs.lastGt and gt < cs.lastGt then gt = cs.lastGt end
+    cs.lastGt = gt
+    clockLog("atk", gt, cs.gs or 0, state)
+    return gt
+  end
+  -- 3) wall-clock anchor from the first time we saw state 5 in this process
+  if cs.firstState5Wall == nil then
+    cs.firstState5Wall = wall
+    if not cs.warned.wall then
+      cs.warned.wall = true
+      log("[clock] mid-join wall-anchored (in-game clock approximate)")
+    end
+  end
+  local gt = (cs.gs and cs.gs > 1 and cs.gs or 0) + (wall - cs.firstState5Wall)
+  if cs.lastGt and gt < cs.lastGt then gt = cs.lastGt end
+  cs.lastGt = gt
+  clockLog("wall", gt, cs.gs or 0, state)
+  return gt
+end
+function GameRules.GetGameState()
+  local gr = gamerules(); if not gr then return 0 end
+  return rdb(gr, offOfFb("C_DOTAGamerules", "m_nGameState", 0x7C), "i32") or 0
+end
+function GameRules.GetGameStartTime()
+  local gr = gamerules(); if not gr then return 0 end
+  return rdb(gr, offOfFb("C_DOTAGamerules", "m_flGameStartTime", 0x594), "f32") or 0
+end
+function GameRules.GetGameMode()
+  local gr = gamerules(); if not gr then return 0 end
+  local off = schema.offsetOf("C_DOTAGamerules", "m_iGameMode") or 0xe4
+  return readable(gr + off, 4) and tonumber(ffi.cast("int32_t*", gr + off)[0]) or 0
+end
+function GameRules.GetMatchID()
+  local gr = gamerules(); if not gr then return 0 end
+  local off = schema.offsetOf("C_DOTAGamerules", "m_unMatchID64") or 0x958
+  return readable(gr + off, 8) and tonumber(ffi.cast("uint64_t*", gr + off)[0]) or 0
+end
+function GameRules.IsPaused()
+  -- exact: C_GameRules::m_bGamePaused (base class of C_DOTAGamerules, +0x3C hpp 6989;
+  -- the old 0x38 read a neighbouring byte and never saw the real pause flag)
+  local gr = gamerules()
+  if not gr then return false end
+  return (rdb(gr, offOfFb("C_GameRules", "m_bGamePaused", 0x3C), "u8") or 0) ~= 0
+end
+function GameRules.GetGoodGlyphCD()
+  local gr = gamerules(); if not gr then return 0 end
+  return rdb(gr, offOfFb("C_DOTAGamerules", "m_fGoodGlyphCooldown", 0x5B8), "f32") or 0
+end
+function GameRules.GetBadGlyphCD()
+  local gr = gamerules(); if not gr then return 0 end
+  return rdb(gr, offOfFb("C_DOTAGamerules", "m_fBadGlyphCooldown", 0x5BC), "f32") or 0
+end
+function GameRules.GetGameModeEntity()
+  local gr = gamerules(); if not gr then return nil end
+  local h = rdb(gr, offOfFb("C_DOTAGamerules", "m_hGameModeEntity", 0xE8), "u32")
+  if not h or h == 0 or h >= 0xFFFFFF then return nil end
+  return entByHandle(h)
+end
+function GameRules.GetLobbyObjectJson() return nil end  -- GC/lobby protobuf not available
+
+-- Engine ------------------------------------------------------------------
+local Engine = {}
+local CHEAT_DIR = "D:\\hake\\lotus"
+function Engine.IsInGame()
+  local st = GameRules.GetGameState()
+  -- hero pick (2) .. post game (6): a match is live (pregame included, the doc
+  -- example treats GameTime as valid from pregame on). Approximation of
+  -- IEngineClient::IsInGame which is true while connected to a map.
+  return st >= 2 and st <= 6
+end
+function Engine.IsInLobby()
+  local st = GameRules.GetGameState()
+  -- matchmaking.lua treats "in lobby or hero selection" as one state
+  return st >= 1 and st <= 3
+end
+function Engine.ExecuteCommand(cmd)
+  -- No console bridge in this loader (original host forwarded to the engine's
+  -- console). Documented approximation: logged, not executed.
+  log("[api] Engine.ExecuteCommand (logged only):", tostring(cmd))
+end
+function Engine.AcceptMatch(state) log("[api] Engine.AcceptMatch (GC unavailable):", tostring(state)) end
+function Engine.CanAcceptMatch() return false end
+function Engine.GetCheatDirectory() return CHEAT_DIR end
+function Engine.RunScript(script)
+  -- KNOWN GAP (not parity): this loader has no Panorama JS bridge, so script
+  -- execution in a panel cannot work. Callers (talents.lua upgrade method 1/3)
+  -- fall back to Player.PrepareUnitOrders TRAIN_ABILITY which does work.
+  if not Engine._runScriptWarned then
+    Engine._runScriptWarned = true
+    log("[api] KNOWN GAP: Engine.RunScript (panorama JS) unavailable; callers must use the order path")
+  end
+  return false
+end
+function Engine.SetQuickBuy() end
+local heroIDMap
+function Engine.GetHeroNameByID(id)
+  id = tonumber(id)
+  if not id then return nil end
+  if not heroIDMap then
+    heroIDMap = {}
+    local kv = heroKV()
+    for name, entry in pairs(kv or {}) do
+      local hid = type(entry) == "table" and tonumber(entry.HeroID)
+      if hid then heroIDMap[hid] = name end
+    end
+  end
+  return heroIDMap[id]
+end
+
+-- FogOfWar ----------------------------------------------------------------
+-- Approximated client-side fog: a point is visible to a team when it is inside
+-- the vision radius of at least one living unit of that team (heroes, towers,
+-- wards, creeps). Terrain/height blockers and tree cover are NOT modelled; the
+-- visibility-source list is cached for 1s so it never costs a full scan per call.
+local visionCache = { at = 0, list = nil }
+local DEFAULT_VISION = { hero = 1800, tower = 1900, ward = 1600, creep = 900, other = 0 }
+local function visionSources()
+  local now = os.clock()
+  if visionCache.list and now - visionCache.at < 1.0 then return visionCache.list end
+  visionCache.at = now
+  local list = {}
+  for _, idn in ipairs(npcIdentities()) do
+    local dn = designer(idn)
+    if Entity.IsAlive(idn) then
+      local kind = "other"
+      if dn:find("npc_dota_hero_") then kind = "hero"
+      elseif dn:find("npc_dota_tower") or dn:find("npc_dota_fort") or dn:find("npc_dota_barracks") then kind = "tower"
+      elseif dn:find("npc_dota_ward") then kind = "ward"
+      elseif dn:find("npc_dota_creep") then kind = "creep" end
+      local defaultRadius = DEFAULT_VISION[kind]
+      if defaultRadius > 0 then
+        local i = inst(idn)
+        local r = i and (rdb(i, offOfFb("C_DOTA_BaseNPC", "m_iDayTimeVisionRange", 0xe78), "i32") or 0) or 0
+        if r <= 0 then r = defaultRadius end
+        local x, y = origin(idn)
+        list[#list + 1] = { team = Entity.GetTeamNum(idn), x = x, y = y, r = r, kind = kind, idn = idn }
+      end
+    end
+  end
+  visionCache.list = list
+  return list
+end
+local function pointVisibleToTeam(point, team, ignoreIdn)
+  if not point then return false end
+  local px = tonumber(point.x or point[1]) or 0
+  local py = tonumber(point.y or point[2]) or 0
+  for _, s in ipairs(visionSources()) do
+    if s.team == team and s.idn ~= ignoreIdn then
+      local dx, dy = px - s.x, py - s.y
+      local r = s.r
+      if dx * dx + dy * dy <= r * r then return true end
+    end
+  end
+  return false
+end
+local localTeamId
+local function localTeam()
+  if localTeamId then return localTeamId end
+  local h = Heroes.GetLocal()
+  if h then localTeamId = Entity.GetTeamNum(h) end
+  return localTeamId or 0
+end
+local FogOfWar = {}
+function FogOfWar.IsPointVisible(point)
+  local team = localTeam()
+  if team == 0 then return true end
+  return pointVisibleToTeam(point, team)
+end
+function FogOfWar.IsVisible(entityIdn)
+  if not entityIdn then return false end
+  local x, y, z = origin(entityIdn)
+  return pointVisibleToTeam({ x = x, y = y, z = z }, localTeam(), entityIdn)
+end
+function FogOfWar.IsVisibleToEnemies(entityIdn)
+  local team = Entity.GetTeamNum(entityIdn)
+  if team == 0 then return false end
+  local x, y, z = origin(entityIdn)
+  local enemyTeam = (team == 2) and 3 or 2
+  return pointVisibleToTeam({ x = x, y = y, z = z }, enemyTeam, entityIdn)
+end
+
+-- GlobalVars / NetChannel --------------------------------------------------
+local GlobalVars = {}
+function GlobalVars.GetCurTime() return GameRules.GetGameTime() end
+local frameState = { prev = 0, count = 0 }
+function GlobalVars.GetAbsFrameTime()
+  -- CS-style "absoluteframetime" = per-frame delta in seconds
+  local wall = tonumber(ffi.C.GetTickCount64()) / 1000.0
+  local dt = frameState.prev > 0 and (wall - frameState.prev) or 0
+  frameState.prev = wall
+  if dt < 0 or dt > 0.5 then dt = 0.033 end
+  frameState.count = frameState.count + 1
+  return dt
+end
+function GlobalVars.GetFrameCount() return frameState.count end
+function GlobalVars.GetRealTime() return tonumber(ffi.C.GetTickCount64()) / 1000.0 end
+local NetChannel = {}
+function NetChannel.GetAvgLatency(flow)
+  -- C_DOTAPlayerController::m_flLastUnitOrdersTotalLatency @0x948 (seconds, round
+  -- trip); the API returns one-way seconds (scripts add it to cast points).
+  -- Unset (-1) until the first orders are sent -> 0 (documented fallback).
+  local p = Players.GetLocal()
+  local c = p and inst(p)
+  if not c then return 0 end
+  local v = rdb(c, offOfFb("C_DOTAPlayerController", "m_flLastUnitOrdersTotalLatency", 0x948), "f32")
+  if not v or v <= 0 or v > 5 then return 0 end
+  return v / 2
+end
+function NetChannel.SendNetMessage() end
+
+-- Log / Config ------------------------------------------------------------
+local Log = {}
+function Log.Write(msg) log("[SelfPlay]", tostring(msg)) end
+
+-- Config: the original host persists key=value pairs in <cheatdir>/configs/<name>.ini.
+-- We do the same so win-model history / last build survive restarts. Writes are
+-- write-through (memory + file) because the game may be killed at any time.
+local Config = {}
+local CONFIG_DIR = CHEAT_DIR .. "\\configs"
+local cfgStore, cfgLoaded, cfgDirReady = {}, {}, false
+local function cfgPath(store)
+  local safe = tostring(store):gsub("[^%w_%-%.]", "_")
+  return CONFIG_DIR .. "\\" .. safe .. ".ini"
+end
+local function cfgEnsureDir()
+  if cfgDirReady then return end
+  cfgDirReady = true
+  local ok = os.execute('mkdir "' .. CONFIG_DIR .. '" 2>nul')
+  local probe = io.open(CONFIG_DIR .. "\\.keep", "w")
+  if probe then probe:close() else log("[api] Config: cannot create ", CONFIG_DIR) end
+end
+local function cfgLoad(store)
+  if cfgLoaded[store] then return cfgStore[store] end
+  cfgLoaded[store] = true
+  cfgEnsureDir()
+  local t = {}
+  local f = io.open(cfgPath(store), "r")
+  if f then
+    for line in f:lines() do
+      if line ~= "" and not line:find("^;") and not line:find("^#") then
+        local k, v = line:match("^([^=]+)=(.*)$")
+        if k and v then
+          t[k] = v
+        end
+      end
+    end
+    f:close()
+  end
+  cfgStore[store] = t
+  return t
+end
+local function cfgSave(store)
+  cfgEnsureDir()
+  local t = cfgStore[store] or {}
+  local f = io.open(cfgPath(store), "w")
+  if not f then log("[api] Config: write failed for ", store); return end
+  local keys = {}
+  for k in pairs(t) do keys[#keys + 1] = k end
+  table.sort(keys)
+  for _, k in ipairs(keys) do
+    f:write(k, "=", tostring(t[k]), "\n")
+  end
+  f:close()
+end
+local function cget(store, key, d, conv)
+  local t = cfgLoad(store)
+  local v = t[key]
+  if v == nil then return d end
+  local n = conv and conv(v)
+  if n == nil then return d end
+  return n
+end
+local function cset(store, key, v)
+  local t = cfgLoad(store)
+  t[key] = v
+  cfgSave(store)
+end
+local function toInt(v) local n = tonumber(v); if not n then return nil end return math.floor(n) end
+local function toFloat(v) return tonumber(v) end
+local function toStr(v) return tostring(v) end
+function Config.ReadInt(store, key, d) return cget(store, key, d or 0, toInt) end
+function Config.ReadFloat(store, key, d) return cget(store, key, d or 0, toFloat) end
+function Config.ReadString(store, key, d) return cget(store, key, d or "", toStr) end
+function Config.WriteInt(store, key, v)
+  local n = tonumber(v)
+  cset(store, key, n and math.floor(n) or 0)
+end
+function Config.WriteFloat(store, key, v)
+  cset(store, key, tonumber(v) or 0)
+end
+function Config.WriteString(store, key, v) cset(store, key, tostring(v or "")) end
+
+-- Ability (stub core) -----------------------------------------------------
+local Ability = {}
+function Ability.GetName(a)
+  prof("Ability.GetName") return designer(a) end
+-- C_DOTABaseAbility runtime offsets (current build, from offset dumper)
+local AB_OFF = {
+  m_iLevel = 0x628, m_iMaxLevel = 0x600, m_bHidden = 0x617, m_bActivated = 0x619,
+  m_bInAbilityPhase = 0x634, m_fCooldown = 0x638, m_flCooldownLength = 0x63c,
+  m_iManaCost = 0x640, m_bToggleState = 0x62d, m_nAbilityCurrentCharges = 0x660,
+  m_flChannelStartTime = 0x64c, m_flCastStartTime = 0x650, m_flOverrideCastPoint = 0x658,
+  -- offsets taken from the dumper schema dump (C_DOTABaseAbility.m_bAutoCastState=1604)
+  m_bAutoCastState = 0x644,
+}
+local function abilityField(a, name, typ)
+  local i = inst(a)
+  local off = AB_OFF[name]
+  if not i or not off then return nil end
+  local sz = (typ == "u8") and 1 or 4
+  if not readable(i + off, sz) then return nil end
+  if typ == "u8" then return tonumber(ffi.cast("uint8_t*", i + off)[0]) end
+  if typ == "f32" then return tonumber(ffi.cast("float*", i + off)[0]) end
+  return tonumber(ffi.cast("int32_t*", i + off)[0])
+end
+local _abKV
+local function abilityKV(a)
+  if _abKV == nil then
+    local ok, x = pcall(require, "xhelpers")
+    _abKV = (ok and x and x.xkv and x.xkv:GetKV("npc_abilities").DOTAAbilities) or {}
+  end
+  return _abKV[designer(a)] or {}
+end
+local function kvNum(kv, key, level)
+  local raw = kv[key]
+  if type(raw) == "table" then raw = raw.value end
+  if type(raw) == "number" then return raw end
+  if type(raw) ~= "string" then return 0 end
+  local r, idx = 0, 0
+  for part in raw:gmatch("%-?%d+%.?%d*") do r, idx = tonumber(part), idx + 1; if idx >= math.max(1, level or 1) then break end end
+  return r or 0
+end
+-- decode symbolic KV flags ("DOTA_... | DOTA_...") into a bitmask via an enum table
+local function kvFlags(kv, key, enumTable)
+  local raw = kv[key]
+  if type(raw) == "table" then raw = raw.value end
+  if type(raw) == "number" then return raw end
+  if type(raw) ~= "string" then return 0 end
+  if raw:match("^%s*%-?%d+%s*$") then return tonumber(raw) or 0 end
+  local sum = 0
+  for name in raw:gmatch("[A-Z_]+") do
+    local v = enumTable[name]
+    if v then sum = sum + v end
+  end
+  return sum
+end
+function Ability.GetLevel(a)
+  prof("Ability.GetLevel") return abilityField(a, "m_iLevel", "i32") or 0 end
+function Ability.GetMaxLevel(a) return abilityField(a, "m_iMaxLevel", "i32") or 0 end
+function Ability.CanBeUpgraded(a)
+  if not a then return false end
+  local level, maxl = Ability.GetLevel(a), Ability.GetMaxLevel(a)
+  if maxl <= 0 then return level < 4 and not Ability.IsHidden(a) end
+  return level < maxl and not Ability.IsHidden(a)
+end
+function Ability.__cdRaw(a)
+  return abilityField(a, "m_fCooldown", "f32"), GameRules.GetGameTime(), abilityField(a, "m_flCooldownLength", "f32"),
+    abilityField(a, "m_bInAbilityPhase", "u8"), abilityField(a, "m_flCastStartTime", "f32")
+end
+function Ability.GetCooldown(a)
+  local endT = abilityField(a, "m_fCooldown", "f32") or 0
+  return math.max(0, endT - GameRules.GetGameTime())
+end
+function Ability.GetCooldownLength(a) return abilityField(a, "m_flCooldownLength", "f32") or 0 end
+function Ability.GetManaCost(a)
+  local v = abilityField(a, "m_iManaCost", "i32")
+  if v and v > 0 then return v end
+  return kvNum(abilityKV(a), "AbilityManaCost", Ability.GetLevel(a))
+end
+function Ability.GetCastRange(a)
+  return kvNum(abilityKV(a), "AbilityCastRange", Ability.GetLevel(a))
+end
+function Ability.IsReady(a)
+  if not a or Ability.GetLevel(a) <= 0 or Ability.IsHidden(a) then return false end
+  if Ability.GetCooldown(a) > 0 then return false end
+  local owner = NPC.GetOwnerNPC and NPC.GetOwnerNPC(a) or nil
+  return true
+end
+function Ability.IsPassive(a)
+  local b = Ability.GetBehavior(a)
+  return bit.band(b, Enum.AbilityBehavior.DOTA_ABILITY_BEHAVIOR_PASSIVE or 0x4) ~= 0
+end
+function Ability.IsUltimate(a)
+  local kv = abilityKV(a)
+  local t = kv.AbilityType
+  if type(t) == "table" then t = t.value end
+  if type(t) == "string" and t:find("ULTIMATE") then return true end
+  return (tonumber(kv.AbilityUltimate) or 0) == 1
+end
+function Ability.GetCastPoint(a)
+  local ov = abilityField(a, "m_flOverrideCastPoint", "f32") or 0
+  if ov > 0 then return ov end
+  return kvNum(abilityKV(a), "AbilityCastPoint", Ability.GetLevel(a))
+end
+function Ability.GetDamage(a) return kvNum(abilityKV(a), "AbilityDamage", Ability.GetLevel(a)) end
+function Ability.GetDamageType(a) return 0 end
+function Ability.IsHidden(a)
+  if not a then return true end
+  return (abilityField(a, "m_bHidden", "u8") or 0) == 1
+end
+function Ability.IsActivated(a) return (abilityField(a, "m_bActivated", "u8") or 0) == 1 end
+function Ability.IsInAbilityPhase(a) return (abilityField(a, "m_bInAbilityPhase", "u8") or 0) == 1 end
+function Ability.GetToggleState(a) return (abilityField(a, "m_bToggleState", "u8") or 0) == 1 end
+-- Self Play (combat.lua:708, huskar.lua:27) compares this against a desired bool:
+-- return a real boolean, not 0/1. Offset from the dumper schema dump.
+function Ability.GetAutoCastState(a) return (abilityField(a, "m_bAutoCastState", "u8") or 0) ~= 0 end
+-- invoker.lua:120 / tinker.lua:72 store this and compare against game time; 0 when
+-- the ability is not channeling (field is a float seconds stamp).
+function Ability.GetChannelStartTime(a)
+  local t = abilityField(a, "m_flChannelStartTime", "f32") or 0
+  if t ~= t or t < 0 then return 0 end
+  return t
+end
+function Ability.GetCurrentCharges(a) return abilityField(a, "m_nAbilityCurrentCharges", "i32") or 0 end
+function Ability.GetBehavior(a) return kvFlags(abilityKV(a), "AbilityBehavior", Enum.AbilityBehavior) end
+function Ability.GetTargetTeam(a) return kvFlags(abilityKV(a), "AbilityUnitTargetTeam", Enum.TargetTeam) end
+function Ability.GetTargetType(a) return kvFlags(abilityKV(a), "AbilityUnitTargetType", Enum.TargetType) end
+function Ability.GetTargetFlags(a) return kvFlags(abilityKV(a), "AbilityUnitTargetFlags", Enum.TargetFlags) end
+function Ability.GetLevelSpecialValueFor(a, key, level)
+  local kv = abilityKV(a)
+  local av = kv.AbilityValues or kv.AbilitySpecialValues
+  if type(av) == "table" then
+    local entry = av[key]
+    if type(entry) == "table" then entry = entry.value end
+    if type(entry) == "number" then return entry end
+    if type(entry) == "string" then
+      local r, idx = 0, 0
+      for part in entry:gmatch("%-?%d+%.?%d*") do r, idx = tonumber(part), idx + 1; if idx >= math.max(1, level or Ability.GetLevel(a)) then break end end
+      return r or 0
+    end
+  end
+  return kvNum(kv, key, level)
+end
+function Ability.SecondsSinceLastUse(a)
+  local t = abilityField(a, "m_flCastStartTime", "f32") or 0
+  if t <= 0 then return 9999 end
+  return math.max(0, GameRules.GetGameTime() - t)
+end
+function Ability.CastNoTarget(a, queue)
+  return orders.prepare(orders.ORDER.DOTA_UNIT_ORDER_CAST_NO_TARGET or 8, 0, nil, entIndex(a), nil, queue == true, false)
+end
+function Ability.CastPosition(a, pos, queue)
+  return orders.prepare(orders.ORDER.DOTA_UNIT_ORDER_CAST_POSITION or 5, 0, vec3(pos), entIndex(a), nil, queue == true, false)
+end
+function Ability.CastTarget(a, target, queue)
+  return orders.prepare(orders.ORDER.DOTA_UNIT_ORDER_CAST_TARGET or 6, entIndex(target), nil, entIndex(a), nil, queue == true, false)
+end
+function Ability.IsChannelling(a)
+  local start = abilityField(a, "m_flChannelStartTime", "f32") or 0
+  if start <= 0 then return false end
+  local now = GameRules.GetGameTime()
+  local dur = kvNum(abilityKV(a), "AbilityChannelTime", Ability.GetLevel(a))
+  if dur <= 0 then dur = 10 end
+  return now >= start and now < start + dur
+end
+function Ability.CanBeExecuted(a)
+  local R = Enum.AbilityCastResult
+  if not a then return R.NOT_LEARNED end
+  if Ability.GetLevel(a) <= 0 then return R.NOT_LEARNED end
+  if Ability.IsHidden(a) then return R.HIDDEN end
+  if Ability.IsPassive(a) then return R.PASSIVE end
+  if Ability.GetCooldown(a) > 0 then return R.ABILITY_CD end
+  return R.READY
+end
+function Ability.IsCastable(a, mana)
+  if Ability.CanBeExecuted(a) ~= Enum.AbilityCastResult.READY then return false end
+  if mana ~= nil and mana < Ability.GetManaCost(a) then return false end
+  return true
+end
+function Ability.Toggle(a, queue)
+  return orders.prepare(orders.ORDER.DOTA_UNIT_ORDER_CAST_TOGGLE or 9, 0, nil, entIndex(a), nil, queue == true, false)
+end
+function Ability.ToggleMod(a, queue)
+  return orders.prepare(orders.ORDER.DOTA_UNIT_ORDER_CAST_TOGGLE_AUTO or 20, 0, nil, entIndex(a), nil, queue == true, false)
+end
+function NPC.IsChannellingAbility(e)
+  for i = 0, 31 do
+    local a = abilityAt(e, i)
+    if a and Ability.IsChannelling(a) then return true end
+  end
+  return false
+end
+
+-- missing-method safety net: log once, return a type-safe stub -------------
+local missState = { n = 0, seen = {} }
+local function miss(ns, name)
+  local key = ns .. "." .. name
+  if missState.seen[key] or missState.n > 40 then return end
+  missState.seen[key] = true
+  missState.n = missState.n + 1
+  log("API missing:", key)
+end
+local function softIndex(ns)
+  return function(_, name)
+    miss(ns, name)
+    local f
+    if name:find("^Is") or name:find("^Has") or name:find("^Can") or name:find("^Should") then
+      f = function() return false end
+    elseif name:find("Duration") or name:find("Modifier") and name:find("Get") and not name:find("Property") then
+      f = function() return {} end
+    elseif name:find("^Get") then
+      f = function() return 0 end
+    else
+      f = function() return nil end
+    end
+    return f
+  end
+end
+setmetatable(Entity, { __index = softIndex("Entity") })
+setmetatable(NPC, { __index = softIndex("NPC") })
+setmetatable(Hero, { __index = softIndex("Hero") })
+setmetatable(Player, { __index = softIndex("Player") })
+setmetatable(Ability, { __index = softIndex("Ability") })
+setmetatable(Heroes, { __index = softIndex("Heroes") })
+setmetatable(Players, { __index = softIndex("Players") })
+setmetatable(GameRules, { __index = softIndex("GameRules") })
+
+-- IsDormant semantics (reviewer-approved): dormant == not visible to the local player, so
+-- the local hero and own-team units are NEVER dormant. Live probe samples 22:08:10 and
+-- 22:11:58 (fresh match, lane phase, hero 89-94 u from the wave) both reported
+-- Entity.IsDormant(local hero)=true from the NPC-visible mask / scene-node fallbacks, and
+-- 85 reference call sites gate logic on `not Entity.IsDormant` (teamplay.lua:22 visible(),
+-- support_policy.live, Self Play.lua:244-class gates, last_hit/creep visibility paths).
+-- Enemies/fogged units keep the engine dormancy value (no IsVisible aliasing); no changes
+-- to IsVisible/IsEntity/GetTeamNum.
+do
+  local baseIsDormant = Entity.IsDormant
+  local ownTeam, ownTeamAt = 0, 0
+  function Entity.IsDormant(e)
+    if e == nil then return true end
+    local t = Entity.GetTeamNum(e)
+    if t == 2 or t == 3 then
+      local now = os.clock()
+      if now - ownTeamAt > 1.0 then
+        ownTeamAt = now
+        local lh = Heroes.GetLocal()
+        ownTeam = lh and Entity.GetTeamNum(lh) or 0
+      end
+      if ownTeam ~= 0 and t == ownTeam then return false end
+    end
+    return baseIsDormant(e)
+  end
+end
+
+-- registration ------------------------------------------------------------
+function API.register()
+  schema.init(); entity.init(); orders.init()
+  _G.Entity = Entity; _G.NPC = NPC; _G.Hero = Hero; _G.Heroes = Heroes
+  _G.Player = Player; _G.Players = Players; _G.GameRules = GameRules
+  _G.Engine = Engine; _G.Log = Log; _G.Config = Config; _G.Ability = Ability
+  _G.FogOfWar = FogOfWar; _G.GlobalVars = GlobalVars; _G.NetChannel = NetChannel
+  -- NPC visibility helpers live next to the fog implementation
+  rawset(NPC, "IsVisibleToEnemies", function(e) return FogOfWar.IsVisibleToEnemies(e) end)
+  rawset(NPC, "IsVisibleToEnemiesByFog", function(e) return FogOfWar.IsVisibleToEnemies(e) end)
+  rawset(NPC, "GetScepterUpgradeID", function(e) return field(e, "C_DOTA_BaseNPC", "m_nScepterUpgradeID", "u32", 0x1878) or 0 end)
+  rawset(NPC, "GetShardUpgradeID", function(e) return field(e, "C_DOTA_BaseNPC", "m_nShardUpgradeID", "u32", 0x187c) or 0 end)
+  -- common enums/aliases used by Self Play
+  _G.Enum = _G.Enum or { UnitOrder = orders.ORDER, OrderIssuer = orders.ISSUER }
+  _G.Vector = _G.Vector or function(x, y, z) return { x = x or 0, y = y or 0, z = z or 0 } end
+  log("api.register: core namespaces registered")
+end
+
+API.Entity, API.NPC, API.Hero, API.Heroes = Entity, NPC, Hero, Heroes
+API.Player, API.Players, API.GameRules, API.Engine = Player, Players, GameRules, Engine
+API.rawGamerules = gamerules
+return API
+
+
+
+
+
+
+
+
+
+

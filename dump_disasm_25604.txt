@@ -1,0 +1,139 @@
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   EnableRedirectToV8JsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.015 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 29
+
+Microsoft (R) Windows Debugger Version 10.0.26100.6584 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+
+Loading Dump File [D:\hake\lotus\dumps\dota2.exe.25604.dmp]
+User Mini Dump File with Full Memory: Only application data is available
+
+Symbol search path is: srv*
+Executable search path is: 
+Windows 10 Version 19045 MP (28 procs) Free x64
+Product: WinNt, suite: SingleUserTS
+Edition build lab: 19041.1.amd64fre.vb_release.191206-1406
+Debug session time: Tue Nov 17 18:14:44.000 2026 (UTC + 3:00)
+System Uptime: 0 days 10:20:49.140
+Process Uptime: 0 days 0:05:11.000
+................................................................
+................................................................
+............................................................
+Loading unloaded module list
+..................
+This dump file has an exception of interest stored in it.
+The stored exception information can be accessed via .ecxr.
+(6404.388c): Security check failure or stack buffer overrun - code c0000409 (first/second chance not available)
+Subcode: 0x2 FAST_FAIL_STACK_COOKIE_CHECK_FAILURE 
+For analysis of this file, run !analyze -v
+nvwgf2umx!NVDEV_Thunk+0x5056bd:
+00007ff8`89fabcdd cd29            int     29h
+0:055> cdb: Reading initial command 'u host16+0x4eed L18; u host16+0x2992 L18; u host16+0xf367 L18; q'
+*** WARNING: Unable to verify checksum for host16.dll
+host16+0x4eed:
+00007fff`e1124eed 4881c478030000  add     rsp,378h
+00007fff`e1124ef4 5b              pop     rbx
+00007fff`e1124ef5 5d              pop     rbp
+00007fff`e1124ef6 c3              ret
+00007fff`e1124ef7 cc              int     3
+00007fff`e1124ef8 cc              int     3
+00007fff`e1124ef9 cc              int     3
+00007fff`e1124efa cc              int     3
+00007fff`e1124efb cc              int     3
+00007fff`e1124efc cc              int     3
+00007fff`e1124efd cc              int     3
+00007fff`e1124efe cc              int     3
+00007fff`e1124eff cc              int     3
+00007fff`e1124f00 48894c2408      mov     qword ptr [rsp+8],rcx
+00007fff`e1124f05 4889542410      mov     qword ptr [rsp+10h],rdx
+00007fff`e1124f0a 4c89442418      mov     qword ptr [rsp+18h],r8
+00007fff`e1124f0f 4c894c2420      mov     qword ptr [rsp+20h],r9
+00007fff`e1124f14 53              push    rbx
+00007fff`e1124f15 4883ec60        sub     rsp,60h
+00007fff`e1124f19 488b0520710200  mov     rax,qword ptr [host16!SetMenuOpen+0x25800 (00007fff`e114c040)]
+00007fff`e1124f20 4833c4          xor     rax,rsp
+00007fff`e1124f23 4889442440      mov     qword ptr [rsp+40h],rax
+00007fff`e1124f28 488d151da80100  lea     rdx,[host16!SetMenuOpen+0x18f0c (00007fff`e113f74c)]
+00007fff`e1124f2f 488d0d1aa80100  lea     rcx,[host16!SetMenuOpen+0x18f10 (00007fff`e113f750)]
+host16+0x2992:
+00007fff`e1122992 4883c330        add     rbx,30h
+00007fff`e1122996 4883ee01        sub     rsi,1
+00007fff`e112299a 0f85d0feffff    jne     host16+0x2870 (00007fff`e1122870)
+00007fff`e11229a0 4c8bac24c0300000 mov     r13,qword ptr [rsp+30C0h]
+00007fff`e11229a8 488bbc24c8300000 mov     rdi,qword ptr [rsp+30C8h]
+00007fff`e11229b0 488b9c2418310000 mov     rbx,qword ptr [rsp+3118h]
+00007fff`e11229b8 872de6b61700    xchg    ebp,dword ptr [host16!SetMenuOpen+0x177864 (00007fff`e129e0a4)]
+00007fff`e11229be 488bac24d8300000 mov     rbp,qword ptr [rsp+30D8h]
+00007fff`e11229c6 488bb424d0300000 mov     rsi,qword ptr [rsp+30D0h]
+00007fff`e11229ce 498bce          mov     rcx,r14
+00007fff`e11229d1 e88a170000      call    host16+0x4160 (00007fff`e1124160)
+00007fff`e11229d6 458bc4          mov     r8d,r12d
+00007fff`e11229d9 418bd7          mov     edx,r15d
+00007fff`e11229dc 498bce          mov     rcx,r14
+00007fff`e11229df ff1533e71700    call    qword ptr [host16!SetMenuOpen+0x17a8d8 (00007fff`e12a1118)]
+00007fff`e11229e5 488b8c24b0300000 mov     rcx,qword ptr [rsp+30B0h]
+00007fff`e11229ed 4833cc          xor     rcx,rsp
+00007fff`e11229f0 e8ab3f0000      call    host16!SetMenuOpen+0x160 (00007fff`e11269a0)
+00007fff`e11229f5 4881c4e0300000  add     rsp,30E0h
+00007fff`e11229fc 415f            pop     r15
+00007fff`e11229fe 415e            pop     r14
+00007fff`e1122a00 415c            pop     r12
+00007fff`e1122a02 c3              ret
+00007fff`e1122a03 cc              int     3
+host16!SetMenuOpen+0x8b27:
+00007fff`e112f367 4d18e8          sbb     r8b,r13b
+00007fff`e112f36a d6              ???
+00007fff`e112f36b fd              std
+00007fff`e112f36c ff              ???
+00007fff`e112f36d ff4c8d4d        dec     dword ptr [rbp+rcx*4+4Dh]
+00007fff`e112f371 e04c            loopne  host16!SetMenuOpen+0x8b7f (00007fff`e112f3bf)
+00007fff`e112f373 8d45f8          lea     eax,[rbp-8]
+00007fff`e112f376 488d55e4        lea     rdx,[rbp-1Ch]
+00007fff`e112f37a 488d4d18        lea     rcx,[rbp+18h]
+00007fff`e112f37e e839fdffff      call    host16!SetMenuOpen+0x887c (00007fff`e112f0bc)
+00007fff`e112f383 4883c440        add     rsp,40h
+00007fff`e112f387 5d              pop     rbp
+00007fff`e112f388 c3              ret
+00007fff`e112f389 cc              int     3
+00007fff`e112f38a cc              int     3
+00007fff`e112f38b cc              int     3
+00007fff`e112f38c 48895c2408      mov     qword ptr [rsp+8],rbx
+00007fff`e112f391 4889742410      mov     qword ptr [rsp+10h],rsi
+00007fff`e112f396 57              push    rdi
+00007fff`e112f397 4883ec20        sub     rsp,20h
+00007fff`e112f39b ff15affd0000    call    qword ptr [host16!SetMenuOpen+0x18910 (00007fff`e113f150)]
+00007fff`e112f3a1 8b0d31ce0100    mov     ecx,dword ptr [host16!SetMenuOpen+0x25998 (00007fff`e114c1d8)]
+00007fff`e112f3a7 4883caff        or      rdx,0FFFFFFFFFFFFFFFFh
+00007fff`e112f3ab 8bf8            mov     edi,eax
+quit:
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

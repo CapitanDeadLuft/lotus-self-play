@@ -1,0 +1,15 @@
+sizeof DWORD(unsigned long)=4
+sizeof ULONG_PTR=8
+sizeof int=4
+sizeof wchar_t=2
+sizeof PROCESSENTRY32W=568
+dwSize	0
+cntUsage	4
+th32ProcessID	8
+th32DefaultHeapID	16
+th32ModuleID	24
+cntThreads	28
+th32ParentProcessID	32
+pcPriClassBase	36
+dwFlags	40
+szExeFile	44

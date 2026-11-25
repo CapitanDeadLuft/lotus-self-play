@@ -1,0 +1,3 @@
+# no switches: all features enabled
+off=
+stub=

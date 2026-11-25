@@ -1,0 +1,16 @@
+{
+ "client_version": "6993",
+ "source_revision": "11269454",
+ "client_dll_size": 109376152,
+ "client_dll_mtime": 1795497993,
+ "puo": {
+  "matches": 1,
+  "file_offset": "0x1c18030",
+  "rva": 29461552
+ },
+ "dumper_build": "988312-1dd77a06d103d1a",
+ "dumper_engine": {
+  "dwEntityList": "0x6649410",
+  "dwLocalPlayerController": "0x63e30a0"
+ }
+}

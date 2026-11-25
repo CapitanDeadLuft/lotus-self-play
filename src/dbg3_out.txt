@@ -1,0 +1,15 @@
+sizeof PE32W = 568
+snap ok
+FirstW = 1 pid=0
+  iter 200 pid=18488
+  iter 400 pid=21672
+  iter 600 pid=21672
+  iter 800 pid=21672
+  iter 1000 pid=21672
+  iter 1200 pid=21672
+  iter 1400 pid=21672
+  iter 1600 pid=21672
+  iter 1800 pid=21672
+  iter 2000 pid=21672
+loop done, iterations=2000 lastOK=0
+ALL OK

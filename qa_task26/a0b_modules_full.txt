@@ -1,0 +1,164 @@
+﻿pid=11996 start=19:44:59 modules_total=163
+AcGenral.DLL base=0x140704744538112 size=405504 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\AcGenral.DLL
+ADVAPI32.dll base=0x140705818017792 size=724992 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\ADVAPI32.dll
+amd_ags_x64.dll base=0x140704929480704 size=196608 ver=6.0.2.0 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\amd_ags_x64.dll
+animationsystem.dll base=0x140704445431808 size=12472320 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\animationsystem.dll
+apphelp.dll base=0x140705757724672 size=606208 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\apphelp.dll
+AUDIOSES.DLL base=0x140705168424960 size=1576960 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\AUDIOSES.DLL
+avrt.dll base=0x140705716043776 size=40960 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\avrt.dll
+bcrypt.dll base=0x140705809432576 size=159744 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\bcrypt.dll
+bcryptprimitives.dll base=0x140705816707072 size=532480 ver=10.0.19041.5007 (WinBuild.160101.0800) path=C:\WINDOWS\System32\bcryptprimitives.dll
+cairo.dll base=0x140704256098304 size=1282048 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\cairo.dll
+CFGMGR32.dll base=0x140705814151168 size=319488 ver=10.0.19041.3996 (WinBuild.160101.0800) path=C:\WINDOWS\System32\CFGMGR32.dll
+clbcatq.dll base=0x140705830600704 size=692224 ver=2001.12.10941.16384 (WinBuild.160101.0800) path=C:\WINDOWS\System32\clbcatq.dll
+client.dll base=0x140736864387072 size=115585024 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\dota\bin\win64\client.dll
+ColorAdapterClient.dll base=0x140705695531008 size=69632 ver=10.0.19041.5129 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\ColorAdapterClient.dll
+combase.dll base=0x140705845215232 size=3489792 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\combase.dll
+CoreMessaging.dll base=0x140705748680704 size=991232 ver=10.0.19041.5915 path=C:\WINDOWS\System32\CoreMessaging.dll
+CoreUIComponents.dll base=0x140705743765504 size=3518464 ver=10.0.19041.3636 path=C:\WINDOWS\System32\CoreUIComponents.dll
+cpadvai.dll base=0x1834352640 size=102400 ver=5.0.16164.0 path=C:\Program Files\Common Files\Crypto Pro\AppCompat\cpadvai.dll
+cpcrypt.dll base=0x1834483712 size=151552 ver=5.0.16223.0 path=C:\Program Files\Common Files\Crypto Pro\AppCompat\cpcrypt.dll
+cpcsp.dll base=0x1833566208 size=36864 ver=5.0.14686.0 path=C:\Program Files\Crypto Pro\CSP\cpcsp.dll
+cpcspi.dll base=0x2149122048 size=2052096 ver=5.0.17975.0 path=C:\Program Files\Crypto Pro\CSP\cpcspi.dll
+cpsuprt.dll base=0x1833631744 size=618496 ver=5.0.15661.0 path=C:\Program Files\Crypto Pro\CSP\cpsuprt.dll
+cpwinet.dll base=0x1833500672 size=45056 ver=5.0.15353.0 path=C:\Program Files\Common Files\Crypto Pro\AppCompat\cpwinet.dll
+crashhandler64.dll base=0x140705078640640 size=1785856 ver=11.23.65.88 path=C:\Program Files (x86)\Steam\crashhandler64.dll
+CRYPT32.dll base=0x140705807990784 size=1429504 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\CRYPT32.dll
+cryptbase.dll base=0x140705800388608 size=49152 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\cryptbase.dll
+cryptnet.dll base=0x140705670168576 size=200704 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\cryptnet.dll
+CRYPTSP.dll base=0x140705801240576 size=98304 ver=10.0.19041.5856 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\CRYPTSP.dll
+d3d11.dll base=0x140705730461696 size=2506752 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\d3d11.dll
+d3d9.dll base=0x140704753713152 size=1904640 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\d3d9.dll
+D3DCOMPILER_47.dll base=0x140704506904576 size=4382720 ver=10.0.17134.12 (WinBuild.160101.0800) path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\D3DCOMPILER_47.dll
+dataexchange.dll base=0x140705122549760 size=253952 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\system32\dataexchange.dll
+dbghelp.dll base=0x2147418112 size=1662976 ver=6.12.0002.633 (debuggers(dbg).100201-1211) path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\dbghelp.dll
+dcomp.dll base=0x140705749729280 size=1982464 ver=10.0.19041.6157 (WinBuild.160101.0800) path=C:\WINDOWS\system32\dcomp.dll
+devobj.dll base=0x140705805434880 size=208896 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\devobj.dll
+dota2.exe base=0x140699285520384 size=2420736 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\dota2.exe
+drvstore.dll base=0x140705668792320 size=1339392 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\drvstore.dll
+DWMAPI.DLL base=0x140705767751680 size=188416 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\DWMAPI.DLL
+dxcore.dll base=0x140705717354496 size=241664 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\dxcore.dll
+DXGI.DLL base=0x140705772077056 size=1007616 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\DXGI.DLL
+engine2.dll base=0x140704525910016 size=9465856 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\engine2.dll
+filesystem_stdio.dll base=0x140704516276224 size=2277376 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\filesystem_stdio.dll
+gameoverlayrenderer64.dll base=0x140704539672576 size=1912832 ver=11.23.65.88 path=C:\Program Files (x86)\Steam\gameoverlayrenderer64.dll
+GDI32.dll base=0x140705842790400 size=176128 ver=10.0.19041.6157 (WinBuild.160101.0800) path=C:\WINDOWS\System32\GDI32.dll
+gdi32full.dll base=0x140705814478848 size=1150976 ver=10.0.19041.6157 (WinBuild.160101.0800) path=C:\WINDOWS\System32\gdi32full.dll
+gpapi.dll base=0x140705771880448 size=143360 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\gpapi.dll
+HID.DLL base=0x140705771814912 size=53248 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\HID.DLL
+host.dll base=0x140704254590976 size=1470464 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\dota\bin\win64\host.dll
+imagehlp.dll base=0x140705848754176 size=118784 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\System32\imagehlp.dll
+imemanager.dll base=0x140704811057152 size=253952 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\imemanager.dll
+IMM32.DLL base=0x140705827651584 size=192512 ver=10.0.19041.6157 (WinBuild.160101.0800) path=C:\WINDOWS\System32\IMM32.DLL
+InputHost.dll base=0x140705559216128 size=1384448 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\Windows\System32\InputHost.dll
+inputsystem.dll base=0x140704728023040 size=339968 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\inputsystem.dll
+IPHLPAPI.DLL base=0x140705795145728 size=241664 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\IPHLPAPI.DLL
+kernel.appcore.dll base=0x140705769717760 size=73728 ver=10.0.19041.3758 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\kernel.appcore.dll
+KERNEL32.DLL base=0x140705819525120 size=794624 ver=10.0.19041.5915 (WinBuild.160101.0800) path=C:\WINDOWS\System32\KERNEL32.DLL
+KERNELBASE.dll base=0x140705810481152 size=3104768 ver=10.0.19041.5915 (WinBuild.160101.0800) path=C:\WINDOWS\System32\KERNELBASE.dll
+libavcodec-58.dll base=0x140704266780672 size=8200192 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libavcodec-58.dll
+libavformat-58.dll base=0x140704318947328 size=1859584 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libavformat-58.dll
+libavresample-4.dll base=0x140704428654592 size=778240 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libavresample-4.dll
+libavutil-56.dll base=0x140704262586368 size=4173824 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libavutil-56.dll
+libfontconfig-1.dll base=0x6442450944 size=507904 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libfontconfig-1.dll
+libfreetype-6.dll base=0x140704364691456 size=1081344 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libfreetype-6.dll
+libglib-2.0-0.dll base=0x2651974795264 size=1564672 ver=2.42.0.0 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libglib-2.0-0.dll
+libgmodule-2.0-0.dll base=0x2651979186176 size=110592 ver=2.42.0.0 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libgmodule-2.0-0.dll
+libgobject-2.0-0.dll base=0x2651978727424 size=348160 ver=2.42.0.0 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libgobject-2.0-0.dll
+libmpg123-0.dll base=0x2151219200 size=434176 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libmpg123-0.dll
+libpango-1.0-0.dll base=0x140704428195840 size=413696 ver=1.36.8.0 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libpango-1.0-0.dll
+libpangoft2-1.0-0.dll base=0x140704418430976 size=405504 ver=1.36.8.0 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libpangoft2-1.0-0.dll
+libswscale-5.dll base=0x140704339656704 size=1343488 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\libswscale-5.dll
+localize.dll base=0x140704725270528 size=389120 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\localize.dll
+materialsystem2.dll base=0x140704505266176 size=1593344 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\materialsystem2.dll
+meshsystem.dll base=0x140704468631552 size=2224128 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\meshsystem.dll
+MMDevApi.dll base=0x140705645854720 size=544768 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\MMDevApi.dll
+MPR.dll base=0x140705694547968 size=118784 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\MPR.dll
+MSASN1.dll base=0x140705803534336 size=73728 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\MSASN1.dll
+mscms.dll base=0x140705695662080 size=712704 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\mscms.dll
+MSCTF.dll base=0x140705829027840 size=1134592 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\MSCTF.dll
+msvcp_win.dll base=0x140705809825792 size=643072 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\System32\msvcp_win.dll
+msvcrt.dll base=0x140705844559872 size=647168 ver=7.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\System32\msvcrt.dll
+MSWSOCK.dll base=0x140705798291456 size=434176 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\MSWSOCK.dll
+navsystem.dll base=0x140704119062528 size=1380352 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\navsystem.dll
+networksystem.dll base=0x140704459390976 size=2899968 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\networksystem.dll
+ntdll.dll base=0x140705851441152 size=2064384 ver=10.0.19041.4842 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\ntdll.dll
+ntmarta.dll base=0x140705793179648 size=208896 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\ntmarta.dll
+nvapi64.dll base=0x140705388691456 size=5853184 ver=32.0.15.9159 path=C:\WINDOWS\SYSTEM32\nvapi64.dll
+nvgpucomp64.dll base=0x140705563738112 size=80736256 ver=32.0.15.9159 path=C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvgpucomp64.dll
+nvldumdx.dll base=0x140705671217152 size=802816 ver=32.0.15.9159 path=C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvldumdx.dll
+NvMemMapStoragex.dll base=0x140705521664000 size=1245184 ver= path=C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\NvMemMapStoragex.dll
+NvMessageBus.dll base=0x140705382531072 size=3551232 ver= path=C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\Display.NvContainer\NvMessageBus.dll
+nvppex.dll base=0x140705093058560 size=1798144 ver=32.0.15.9159 path=C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvppex.dll
+nvwgf2umx.dll base=0x140705428537344 size=84860928 ver=32.0.15.9159 path=C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvwgf2umx.dll
+ole32.dll base=0x140705848885248 size=1224704 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\ole32.dll
+OLEAUT32.dll base=0x140705820377088 size=839680 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\System32\OLEAUT32.dll
+panorama.dll base=0x140736827621376 size=6475776 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\panorama.dll
+panorama_text_pango.dll base=0x140704309903360 size=3014656 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\panorama_text_pango.dll
+particles.dll base=0x140704275038208 size=8740864 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\particles.dll
+phonon.dll base=0x140704058441728 size=53534720 ver=4.9.0 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\phonon.dll
+POWRPROF.dll base=0x140705800060928 size=307200 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\POWRPROF.dll
+profapi.dll base=0x140705807138816 size=147456 ver=10.0.19041.6033 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\profapi.dll
+PROPSYS.dll base=0x140705719517184 size=999424 ver=7.0.19041.4522 (WinBuild.160101.0800) path=C:\Windows\System32\PROPSYS.dll
+PSAPI.DLL base=0x140705842987008 size=32768 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\System32\PSAPI.DLL
+pulse_system.dll base=0x140704463781888 size=2625536 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\pulse_system.dll
+rendersystemdx11.dll base=0x140704511295488 size=4943872 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\rendersystemdx11.dll
+resourcepolicyclient.dll base=0x140705765523456 size=81920 ver=10.0.19041.4355 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\resourcepolicyclient.dll
+resourcesystem.dll base=0x140704678805504 size=671744 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\resourcesystem.dll
+RPCRT4.dll base=0x140705827848192 size=1179648 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\RPCRT4.dll
+rsaenh.dll base=0x140705790754816 size=229376 ver=10.0.19041.320 (WinBuild.160101.0800) path=C:\WINDOWS\system32\rsaenh.dll
+scenefilecache.dll base=0x140704120504320 size=1495040 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\scenefilecache.dll
+scenesystem.dll base=0x140704283820032 size=10248192 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\scenesystem.dll
+schemasystem.dll base=0x140704677363712 size=520192 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\schemasystem.dll
+SDL3.dll base=0x140704518569984 size=2912256 ver=3, 5, 0, 0 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\SDL3.dll
+sechost.dll base=0x140705850130432 size=651264 ver=10.0.19041.320 (WinBuild.160101.0800) path=C:\WINDOWS\System32\sechost.dll
+Secur32.dll base=0x140705342029824 size=49152 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\Secur32.dll
+server.dll base=0x140703962890240 size=95502336 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\dota\bin\win64\server.dll
+SETUPAPI.dll base=0x140705821229056 size=4653056 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\SETUPAPI.dll
+shcore.dll base=0x2650106232832 size=708608 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\shcore.dll
+SHELL32.dll base=0x140705831321600 size=7798784 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\SHELL32.dll
+shfolder.dll base=0x140705298055168 size=28672 ver=10.0.19041.1 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\shfolder.dll
+SHLWAPI.dll base=0x140705839120384 size=372736 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\SHLWAPI.dll
+soundsystem.dll base=0x140704429441024 size=7073792 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\soundsystem.dll
+SspiCli.dll base=0x140705806614528 size=204800 ver=10.0.19041.6328 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\SspiCli.dll
+steam_api64.dll base=0x140704757514240 size=327680 ver=10.22.11.59 path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\steam_api64.dll
+steamaudio.dll base=0x140704326746112 size=3796992 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\steamaudio.dll
+steamclient64.dll base=0x140704688832512 size=27185152 ver=11.23.65.88 path=C:\Program Files (x86)\Steam\steamclient64.dll
+steamnetworkingsockets.dll base=0x140704521519104 size=4337664 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\steamnetworkingsockets.dll
+textinputframework.dll base=0x140705560657920 size=1019904 ver=10.0.19041.6456 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\textinputframework.dll
+tier0.dll base=0x140704535412736 size=4198400 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\tier0.dll
+tier0_s64.dll base=0x140704874889216 size=3194880 ver=11.23.65.88 path=C:\Program Files (x86)\Steam\tier0_s64.dll
+twinapi.appcore.dll base=0x140705699987456 size=2109440 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\system32\twinapi.appcore.dll
+ucrtbase.dll base=0x140705815658496 size=1048576 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\System32\ucrtbase.dll
+UMPDC.dll base=0x140705799929856 size=73728 ver= path=C:\WINDOWS\SYSTEM32\UMPDC.dll
+USER32.dll base=0x140705841020928 size=1708032 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\USER32.dll
+USERENV.dll base=0x140705806876672 size=188416 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\USERENV.dll
+USP10.dll base=0x140704837599232 size=102400 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\USP10.dll
+uxtheme.dll base=0x140705764409344 size=647168 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\system32\uxtheme.dll
+v8.dll base=0x140703912165376 size=50696192 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\v8.dll
+v8_icui18n.dll base=0x140704312918016 size=3973120 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\v8_icui18n.dll
+v8_icuuc.dll base=0x140704332054528 size=2916352 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\v8_icuuc.dll
+v8_libbase.dll base=0x140704343195648 size=1662976 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\v8_libbase.dll
+v8_libplatform.dll base=0x140704296730624 size=1482752 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\v8_libplatform.dll
+v8_zlib.dll base=0x140704438550528 size=864256 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\v8_zlib.dll
+v8system.dll base=0x140704729399296 size=241664 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\v8system.dll
+verifier.dll base=0x140704728416256 size=475136 ver=10.0.19041.5438 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\verifier.dll
+VERSION.dll base=0x140705671151616 size=40960 ver=10.0.19041.3636 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\VERSION.dll
+vfbasics.dll base=0x140704729661440 size=479232 ver=10.0.26100.7705 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\vfbasics.dll
+video64.dll base=0x140704320847872 size=5857280 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\video64.dll
+vphysics2.dll base=0x140704439468032 size=5935104 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\vphysics2.dll
+vrfcore.dll base=0x140704751550464 size=266240 ver=10.0.26100.7705 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\vrfcore.dll
+vscript.dll base=0x140704462340096 size=1388544 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\vscript.dll
+vstdlib_s64.dll base=0x140705322434560 size=536576 ver=11.23.65.88 path=C:\Program Files (x86)\Steam\vstdlib_s64.dll
+win32u.dll base=0x140705809629184 size=139264 ver=10.0.19041.6456 (WinBuild.160101.0800) path=C:\WINDOWS\System32\win32u.dll
+WindowManagementAPI.dll base=0x140705705951232 size=659456 ver= path=C:\Windows\System32\WindowManagementAPI.dll
+windows.storage.dll base=0x140705778958336 size=8015872 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\windows.storage.dll
+Windows.UI.dll base=0x140705561706496 size=1306624 ver=10.0.19041.320 (WinBuild.160101.0800) path=C:\Windows\System32\Windows.UI.dll
+WININET.dll base=0x140705300611072 size=5070848 ver=11.00.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\WININET.dll
+WINMM.dll base=0x140705778761728 size=159744 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\WINMM.dll
+wintrust.dll base=0x140705813626880 size=471040 ver=10.0.19041.6456 (WinBuild.160101.0800) path=C:\WINDOWS\System32\wintrust.dll
+wintypes.dll base=0x140705726791680 size=1404928 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\wintypes.dll
+Wldp.dll base=0x140705800978432 size=176128 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\Wldp.dll
+worldrenderer.dll base=0x140704466468864 size=2150400 ver= path=E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\worldrenderer.dll
+WS2_32.dll base=0x140705839579136 size=438272 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\System32\WS2_32.dll
+WSOCK32.dll base=0x140705748549632 size=36864 ver=10.0.19041.4522 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\WSOCK32.dll

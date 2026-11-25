@@ -1,0 +1,4 @@
+userInteractive=True session=1
+foreground_ptr=7474058 fg_pid=23860
+v1_keybd_event_vk highHits=0/8
+v2_keybd_event_scancode highHits=0/8

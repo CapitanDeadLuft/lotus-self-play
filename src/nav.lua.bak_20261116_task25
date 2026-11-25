@@ -1,0 +1,1523 @@
+-- nav.lua — GridNav replacement for the Self Play port.
+--
+-- The original bot calls GridNav.IsTraversable / GridNav.IsTraversableFromTo /
+-- GridNav.BuildPath / GridNav.CreateNpcMap constantly (navigation.lua,
+-- awareness.lua, lane_geometry.lua, last_hit.lua, every hero module). The old
+-- port returned "everything walkable" + a straight line, so the bot aimed into
+-- tree clusters and stalled when the engine refused the move order.
+--
+-- Design (engine-parity grid):
+--   * World is a square [-8192, 8192]^2 (Dota map bounding box, 256 x 256 cells
+--     of 64 units — the same resolution the engine's grid nav uses).
+--   * TERRAIN mask (never passable even for tree-walkers): buildings, map edge.
+--   * TREE mask (skipped when BuildPath(ignoreTrees=true), which is what Treant
+--     Protector with MODIFIER_STATE_ALLOW_PATHING_THROUGH_TREES gets): every
+--     static tree blocks the 64x64 cell that contains its base (one cell per
+--     tree — same quantisation the engine uses, so one-cell tree gaps stay open).
+--   * A* (8-neighbour, octile heuristic, no corner cutting) + line-of-sight
+--     string-pulling, cached per (start cell, goal cell, ignoreTrees, npc map).
+--   * Waypoint Z comes from a coarse ground-height grid sampled from the Z of
+--     static world entities (trees/buildings stand on the ground).
+--   * Dynamic obstacles: temp trees (Furion/iron branch), and per-call NPC
+--     obstacle boxes via CreateNpcMap (creep avoidance in navigation.creepPath).
+--
+-- Not passable through *buildings* even when ignoreTrees=true: terrain mask is
+-- always applied. Live acceptance asks exactly this.
+--
+-- Works offline (no Dota): the masks are plain Lua tables when no ffi, and
+-- test_nav.lua uses setObstacles() to inject synthetic worlds.
+
+local nav = {}
+
+local ok_ffi, ffi = pcall(require, "ffi")
+if ok_ffi then
+  pcall(ffi.cdef, [[
+    void* memset(void* dst, int c, size_t n);
+    unsigned long long GetTickCount64(void);
+    int QueryPerformanceCounter(int64_t* out);
+    int QueryPerformanceFrequency(int64_t* out);
+  ]])
+end
+
+-- configuration ------------------------------------------------------------
+nav.cell = 64                -- engine grid cell (world units)
+nav.minX, nav.maxX = -8192, 8192
+nav.minY, nav.maxY = -8192, 8192
+nav.refreshInterval = 1.5    -- seconds between entity rescans (static map: cheap)
+nav.treeCellMark = true      -- block the cell containing a tree (engine parity)
+nav.buildingPad = 8          -- extra block radius for buildings
+nav.pathCacheSize = 96
+nav.vectorFactory = nil      -- optional function(x,y,z) -> Vector (set by loader)
+
+-- fallback building hull radii (world units) used when schema read is missing.
+-- NOTE: ent_dota_fountain is deliberately NOT in HARD_PATTERNS: Dota heroes walk
+-- onto the fountain pad (it is a trigger, not a collision wall). Blocking it made
+-- IsTraversable(hero spawn pos) false and the bot oscillated at the fountain in
+-- the 20:34 live window. ent_dota_shop is the shop trigger too -> small radius.
+local BUILDING_RADIUS = {
+  tower = 144, tower1 = 144, tower2 = 144, tower3 = 144, tower4 = 144,
+  barracks = 96, fort = 176, shop = 48, shrine = 96,
+  filler = 144, healer = 96, filler_b = 144,
+}
+
+local W, H
+-- Double-buffered masks (reviewer N2): rebuild fills a scratch bank and only
+-- swaps it in after the whole scan+marking succeeded, so a mid-scan failure can
+-- never leave a half-empty grid that silently makes everything traversable.
+local bufA, bufB, curBuf
+local hardMask   -- ffi uint8|table: 1 = terrain blocked (buildings/edge)
+local treeMask   -- ffi uint8|table: 1 = static tree blocked
+local dynMask    -- ffi uint8|table: 1 = temp tree / stall-blocked
+local blocked    -- combined = hard | tree | dyn  (used by IsTraversable)
+local groundZGrid, gzSum, gzCnt, gzW, gzH, GZCELL
+local gzDirty = true
+
+local built, valid, generation = false, false, 0
+local lastRefresh = -1e9
+local lastRescanLog, lastPathLog, lastFailLog = -1e9, -1e9, -1e9
+-- partialPaths: when A* cannot reach the goal, return the best-effort partial path
+-- (opt-in; default is explicit failure + rate-limited log, which the reference
+-- callers treat as 'no path' and recover from via navigation.escape).
+nav.partialPaths = false
+-- Weighted A*: >1 trades a little path optimality for far fewer expansions
+-- (keeps every long path inside the per-path time budget; task-9 item 3).
+nav.heuristicWeight = 1.25
+local logOnce = {}
+
+-- One wall clock for every TTL/refresh decision (reviewer N1: never mix
+-- GameRules match time with os.clock CPU time). GetTickCount64 == milliseconds
+-- since boot, monotonic across lobby -> match, never negative.
+local function wallNow()
+  if ok_ffi then
+    local ok, v = pcall(function() return ffi.C.GetTickCount64() end)
+    if ok and v then return tonumber(v) / 1000.0 end
+  end
+  return os.clock()
+end
+nav.wallNow = wallNow
+
+-- high-resolution wall clock for [nav] duration instrumentation. os.clock() is
+-- PROCESS CPU time on Windows: inside Dota the render/net threads inflate it
+-- massively (a 15 ms rescan was logged as 1.8 s in the 20:29 live run). All
+-- [nav] durations use QPC; coarse TTLs stay on GetTickCount64.
+local qpcFreq
+local function qpcInit()
+  if qpcFreq ~= nil then return qpcFreq or nil end
+  qpcFreq = false
+  if ok_ffi then
+    local ok, f = pcall(function()
+      local v = ffi.new("int64_t[1]")
+      if ffi.C.QueryPerformanceFrequency(v) == 0 then return nil end
+      return tonumber(v[0])
+    end)
+    if ok and f and f > 0 then qpcFreq = f end
+  end
+  return qpcFreq or nil
+end
+local function stampMs()
+  local f = qpcInit()
+  if f then
+    local ok, v = pcall(function()
+      local c = ffi.new("int64_t[1]")
+      if ffi.C.QueryPerformanceCounter(c) == 0 then return nil end
+      return tonumber(c[0])
+    end)
+    if ok and v then return v * 1000.0 / f end
+  end
+  return wallNow() * 1000.0
+end
+nav.stampMs = stampMs
+local function durMs(since) return stampMs() - since end
+
+-- log into host.log only when running inside the game (never from offline tests)
+local function canLog()
+  return rawget(_G, "Entity") ~= nil or rawget(_G, "Players") ~= nil
+end
+-- logOnce: emit only the first occurrence of a failure class (N2)
+local function logNav(onceKey, fmt, ...)
+  if not canLog() then return end
+  if onceKey then
+    if logOnce[onceKey] then return end
+    logOnce[onceKey] = true
+  end
+  local f = io.open("D:\\hake\\lotus\\host.log", "a")
+  if not f then return end
+  local t = {}
+  for i = 1, select("#", ...) do t[i] = tostring(select(i, ...)) end
+  local msg = fmt
+  if #t > 0 then msg = string.format(fmt, table.unpack(t)) end
+  f:write(string.format("%s %s\n", os.date("%H:%M:%S"), msg))
+  f:close()
+end
+nav.logNav = logNav
+
+-- accumulated static obstacles (map statics never disappear; accumulation makes
+-- the grid usable even if the client streams static props in/out of the entity
+-- list). Keyed by quantised position to deduplicate rescans.
+local staticTrees = {}     -- key -> {x,y,z}      (engine parity: block ONE cell)
+local synthTrees = {}      -- key -> {x,y,z,r}    (setObstacles tests: block disc)
+local staticHard = {}      -- key -> {x,y,z,r,name}
+local staticCount = 0
+
+-- dynamic (per-scan) obstacles: temp trees only
+local dynTrees = {}
+
+local perf = { scans = 0, rebuilds = 0, paths = 0, astar = 0, cached = 0, cacheHits = 0,
+  lastAstarMs = 0, lastPathMs = 0, expanded = 0, stalls = 0, incomplete = 0, failedPaths = 0 }
+nav.perf = perf
+
+local function idx(cx, cy) return cy * W + cx end
+local function inside(cx, cy) return cx >= 0 and cy >= 0 and cx < W and cy < H end
+local function cellOf(x, y)
+  return math.floor((x - nav.minX) / nav.cell), math.floor((y - nav.minY) / nav.cell)
+end
+local function cellCenter(cx, cy) -- ===========================================================================
+-- Loader-facing GridNav surface (task-24): `_G.GridNav` must exist in loader
+-- context and delegate to nav. loader-events owns the loader.lua alias pass;
+-- this surface is the canonical implementation and is installed as a fallback
+-- when no other GridNav table is present (e.g. a diag run outside loader).
+-- ===========================================================================
+nav.gridnav = {
+  IsTraversable = function(point, flag, flagExcluded)
+    return nav.IsTraversable(point, flag, flagExcluded)
+  end,
+  IsTraversableFromTo = function(a, b, ignoreTrees, npcMap)
+    return nav.IsTraversableFromTo(a, b, ignoreTrees == true, npcMap)
+  end,
+  BuildPath = function(start, dest, ignoreTrees, npcMap)
+    if type(dest) ~= "table" then return {} end
+    local sx = start and (start.x or start[1]) or 0
+    local sy = start and (start.y or start[2]) or 0
+    local dx, dy = dest.x or dest[1] or 0, dest.y or dest[2] or 0
+    local path = nav.buildPath(sx, sy, dx, dy, ignoreTrees == true, npcMap)
+    local out = {}
+    local factory = nav.vectorFactory
+    for i = 1, #path do
+      local w = path[i]
+      out[i] = factory and factory(w.x, w.y, w.z) or { x = w.x, y = w.y, z = w.z }
+    end
+    return out
+  end,
+  CreateNpcMap = function(excluded, includeTempTrees, customSizes)
+    return nav.CreateNpcMap(excluded, includeTempTrees == true, customSizes)
+  end,
+  ReleaseNpcMap = function(map)
+    return nav.ReleaseNpcMap(map)
+  end,
+  DebugRender = function() return true end,
+}
+
+-- Same integration shape as the other namespace aliases: install the global
+-- only when nothing else claimed it (loader.lua installs its richer wrapper
+-- after requiring us; a diag outside loader gets this surface directly).
+function nav.installGlobal(force)
+  if force or rawget(_G, "GridNav") == nil then _G.GridNav = nav.gridnav end
+  return _G.GridNav
+end
+pcall(nav.installGlobal)
+
+return nav.minX + (cx + 0.5) * nav.cell, nav.minY + (cy + 0.5) * nav.cell end
+local function cellX(x) return math.floor((x - nav.minX) / nav.cell) end
+local function cellY(y) return math.floor((y - nav.minY) / nav.cell) end
+
+local function newBuf()
+  local n = W * H
+  if ok_ffi then
+    return { hard = ffi.new("uint8_t[?]", n), tree = ffi.new("uint8_t[?]", n),
+             dyn = ffi.new("uint8_t[?]", n), blocked = ffi.new("uint8_t[?]", n) }
+  end
+  return { hard = {}, tree = {}, dyn = {}, blocked = {} }
+end
+
+local function alloc()
+  W = math.ceil((nav.maxX - nav.minX) / nav.cell)
+  H = math.ceil((nav.maxY - nav.minY) / nav.cell)
+  bufA, bufB = newBuf(), newBuf()
+  curBuf = bufA
+  hardMask, treeMask, dynMask, blocked = bufA.hard, bufA.tree, bufA.dyn, bufA.blocked
+  gzW, gzH, GZCELL = math.ceil((nav.maxX - nav.minX) / 128), math.ceil((nav.maxY - nav.minY) / 128), 128
+  groundZGrid = {}
+  gzSum, gzCnt = {}, {}
+  gzDirty = true
+  built = true
+end
+nav.alloc = alloc
+
+local function zclear(t, n)
+  if ok_ffi then ffi.C.memset(t, 0, n) else for i = 0, n - 1 do t[i] = 0 end end
+end
+
+local function fillBlocked(b, n)
+  if ok_ffi then
+    ffi.C.memset(b.blocked, 0, n)
+    for i = 0, n - 1 do
+      if b.hard[i] ~= 0 or b.tree[i] ~= 0 or b.dyn[i] ~= 0 then b.blocked[i] = 1 end
+    end
+  else
+    for i = 0, n - 1 do
+      b.blocked[i] = (b.hard[i] ~= 0 or b.tree[i] ~= 0 or b.dyn[i] ~= 0) and 1 or 0
+    end
+  end
+end
+
+-- mark all cells whose centre is within r of (x,y); hard=true -> terrain mask
+local function markDisc(x, y, r, mask)
+  local cx, cy = cellOf(x, y)
+  local rc = math.ceil(r / nav.cell) + 1
+  local r2 = r * r
+  for oy = -rc, rc do
+    for ox = -rc, rc do
+      local gx, gy = cx + ox, cy + oy
+      if inside(gx, gy) then
+        local wx, wy = cellCenter(gx, gy)
+        local dx, dy = wx - x, wy - y
+        if dx * dx + dy * dy <= r2 then mask[idx(gx, gy)] = 1 end
+      end
+    end
+  end
+end
+nav.markDisc = markDisc
+
+-- add one ground-Z sample (static entities only). Dota ground heights are
+-- 128 (low ground) / 256 (high ground) / 384 (base terraces); ignore junk.
+-- Flat numeric arrays (array part of a Lua table) instead of {s,n} tables: the
+-- groundZ fill was measured at 7 ms with nested tables and is on the first-path
+-- critical path (now <1 ms).
+local function zSample(x, y, z)
+  if not z or z ~= z or z < 32 or z > 1200 then return end
+  local gx = math.floor((x - nav.minX) / GZCELL)
+  local gy = math.floor((y - nav.minY) / GZCELL)
+  if gx < 0 or gy < 0 or gx >= gzW or gy >= gzH then return end
+  local k = gy * gzW + gx + 1
+  gzSum[k] = (gzSum[k] or 0) + z
+  gzCnt[k] = (gzCnt[k] or 0) + 1
+  gzDirty = true
+end
+
+-- coarse ground height: sample -> smooth fill -> lookup --------------------
+local groundCache = {}
+local groundCacheN = 0
+local function rebuildGroundZ()
+  local w, h = gzW, gzH
+  local sum, cnt = gzSum, gzCnt
+  local vals = {}
+  for k = 1, w * h do
+    local n = cnt[k]
+    if n and n > 0 then vals[k] = sum[k] / n end
+  end
+  -- one dilation pass: unknown cells take the mean
+  -- of known neighbours. Enough for waypoint Z (order positions on open ground
+  -- are flat; high ground is sampled by its buildings/trees).
+  for _ = 1, 1 do
+    local add
+    for gy = 0, h - 1 do
+      local row = gy * w
+      for gx = 0, w - 1 do
+        local k = row + gx + 1
+        if vals[k] == nil then
+          local s, n = 0, 0
+          local x0 = gx > 0 and gx - 1 or 0
+          local x1 = gx < w - 1 and gx + 1 or w - 1
+          local y0 = gy > 0 and gy - 1 or 0
+          local y1 = gy < h - 1 and gy + 1 or h - 1
+          for yy = y0, y1 do
+            local base = yy * w + 1
+            for xx = x0, x1 do
+              local v = vals[base + xx]
+              if v then s = s + v; n = n + 1 end
+            end
+          end
+          if n > 0 then
+            add = add or {}
+            add[k] = s / n
+          end
+        end
+      end
+    end
+    if not add then break end
+    for k, v in pairs(add) do vals[k] = v end
+  end
+  groundCache = vals
+  groundCacheN = w * h
+  gzDirty = false
+end
+
+-- ground Z at world position; defaults to 128 (low ground) where unknown
+function nav.groundZ(x, y)
+  if type(x) == "table" then x, y = x.x or 0, x.y or 0 end
+  if not x or not y then return 128 end
+  if gzDirty then rebuildGroundZ() end
+  local gx = math.floor((x - nav.minX) / GZCELL)
+  local gy = math.floor((y - nav.minY) / GZCELL)
+  if gx < 0 then gx = 0 elseif gx >= gzW then gx = gzW - 1 end
+  if gy < 0 then gy = 0 elseif gy >= gzH then gy = gzH - 1 end
+  local v = groundCache[gy * gzW + gx]
+  if v then return v end
+  return 128
+end
+
+-- entity classification ----------------------------------------------------
+local HARD_PATTERNS = {
+  { "badguys_tower", "tower" }, { "goodguys_tower", "tower" },
+  { "tower", "tower" }, { "barracks", "barracks" }, { "fort", "fort" },
+  { "shrine", "shrine" }, { "shop", "shop" },
+  { "filler", "filler" }, { "healer", "healer" },
+}
+-- entity names that look like buildings but are walkable triggers / decoration
+local HARD_IGNORE = { "fountain", "halloffame", "lightinfo", "portrait" }
+
+local function classifyHard(name)
+  for i = 1, #HARD_IGNORE do
+    if name:find(HARD_IGNORE[i], 1, true) then return nil end
+  end
+  for i = 1, #HARD_PATTERNS do
+    if name:find(HARD_PATTERNS[i][1], 1, true) then return HARD_PATTERNS[i][2] end
+  end
+  return nil
+end
+
+local function isTreeName(name)
+  if name:find("ent_dota_tree", 1, true) then return "static" end
+  if name:find("temp_tree", 1, true) or name:find("dota_tree", 1, true) then return "dynamic" end
+  return nil
+end
+
+-- world position of an entity identity: Entity.GetAbsOrigin (api) first, then a
+-- direct scene-node read (C_BaseEntity::m_pGameSceneNode 0x330 -> abs origin
+-- 0xD8) so the scan also works before api.register.
+local NODEOFF, ORIGINOFF = 0x330, 0xD8
+local function readOrigin(idn, inst, E, EC)
+  if EC and EC.GetAbsOrigin then
+    local ok, ax, ay, az = pcall(EC.GetAbsOrigin, idn)
+    if ok and ax then return ax, ay, az end
+  end
+  if E and E.GetAbsOrigin then
+    local ok, p = pcall(E.GetAbsOrigin, idn)
+    if ok and p and type(p) == "table" and p.x then return p.x, p.y, p.z end
+    if ok and type(p) == "number" then
+      -- some api builds return x,y,z as multiple values
+      local ok2, ax, ay, az = pcall(E.GetAbsOrigin, idn)
+      if ok2 then return ax, ay, az end
+    end
+  end
+  if inst and ok_ffi and type(inst) == "number" and inst > 0x100000 then
+    local ok, x, y, z = pcall(function()
+      local node = tonumber(ffi.cast("uintptr_t*", ffi.cast("uintptr_t", inst) + NODEOFF)[0])
+      if not node or node < 0x10000 then return nil end
+      return tonumber(ffi.cast("float*", node + ORIGINOFF)[0]),
+             tonumber(ffi.cast("float*", node + ORIGINOFF + 4)[0]),
+             tonumber(ffi.cast("float*", node + ORIGINOFF + 8)[0])
+    end)
+    if ok and x then return x, y, z end
+  end
+  return nil
+end
+
+-- cheap local hero position for the stall oracle: prefers orders.lua's cached
+-- lookup (it scans the entity list at most every 0.25 s) and falls back to the
+-- scene node read.
+local heroPosAt = -1e9
+local heroPosX, heroPosY
+local function heroXY()
+  local t = wallNow()
+  if t - heroPosAt < 0.2 then return heroPosX, heroPosY end
+  heroPosAt = t
+  heroPosX, heroPosY = nil, nil
+  local inst, idn
+  local ord = package.loaded["orders"]
+  if ord and ord.localHero then
+    local ok, i = pcall(ord.localHero)
+    if ok and i and i > 0x10000 then inst = i end
+  end
+  if not inst then
+    local ent = package.loaded["entity"]
+    if ent and ent.getLocalHero then
+      local ok, h = pcall(ent.getLocalHero)
+      if ok and h then inst = h.instance end
+    end
+  end
+  if inst and ok_ffi and type(inst) == "number" and inst > 0x100000 then
+    local ok, x, y = pcall(function()
+      local node = tonumber(ffi.cast("uintptr_t*", ffi.cast("uintptr_t", inst) + NODEOFF)[0])
+      if not node or node < 0x10000 then return nil end
+      return tonumber(ffi.cast("float*", node + ORIGINOFF)[0]),
+             tonumber(ffi.cast("float*", node + ORIGINOFF + 4)[0])
+    end)
+    if ok and x then heroPosX, heroPosY = x, y end
+  end
+  return heroPosX, heroPosY
+end
+nav.heroXY = heroXY
+
+-- optional hull radius read via schema (authoritative when available)
+local oHullRank
+local function hullRadius(inst, kind)
+  if oHullRank == nil then
+    local schema = package.loaded["schema"]
+    if not schema then local ok, m = pcall(require, "schema"); if ok then schema = m end end
+    oHullRank = false
+    if schema and schema.offsetOf then
+      local ok, off = pcall(schema.offsetOf, "C_DOTA_BaseNPC", "m_flHullRadius")
+      if ok and off then oHullRank = off end
+    end
+  end
+  if oHullRank and inst then
+    local ok, v = pcall(function() return tonumber(ffi.cast("float*", inst + oHullRank)[0]) end)
+    if ok and v and v > 8 and v < 1024 then return v end
+  end
+  return BUILDING_RADIUS[kind] or 128
+end
+
+-- static obstacle accumulation --------------------------------------------
+local function addStaticTree(x, y, z)
+  local key = string.format("T%d,%d", math.floor(x / 8), math.floor(y / 8))
+  if staticTrees[key] then return false end
+  staticTrees[key] = { x = x, y = y, z = z }
+  staticCount = staticCount + 1
+  zSample(x, y, z)
+  return true
+end
+
+local function addStaticHard(x, y, z, r, name)
+  local key = string.format("H%d,%d", math.floor(x / 32), math.floor(y / 32))
+  local e = staticHard[key]
+  if e then return false end
+  staticHard[key] = { x = x, y = y, z = z, r = r, name = name }
+  staticCount = staticCount + 1
+  zSample(x, y, z)
+  return true
+end
+
+-- stall-blocked cells: learned from the server refusing our move (the hero did
+-- not move). Temporary, so a false positive cannot permanently break pathing.
+local stallBlocks = {} -- "cx,cy" -> expires (wall seconds)
+nav.stallBlockCount = 0
+
+local function pruneStallBlocks(now)
+  local n = 0
+  for k, exp in pairs(stallBlocks) do
+    if exp <= now then stallBlocks[k] = nil else n = n + 1 end
+  end
+  nav.stallBlockCount = n
+  return n
+end
+
+-- rebuild masks from accumulated statics (+ current dyn tree list) ----------
+-- Builds into the idle bank and swaps on success (N2); no in-place clearing of
+-- the live masks.
+local function rebuild()
+  if not built then alloc() end
+  local n = W * H
+  local b = (curBuf == bufA) and bufB or bufA
+  zclear(b.hard, n); zclear(b.tree, n); zclear(b.dyn, n); zclear(b.blocked, n)
+
+  for _, o in pairs(staticHard) do markDisc(o.x, o.y, o.r + nav.buildingPad, b.hard) end
+  if nav.treeCellMark then
+    for _, o in pairs(staticTrees) do
+      local cx, cy = cellOf(o.x, o.y)
+      if inside(cx, cy) then b.tree[idx(cx, cy)] = 1 end
+    end
+  else
+    for _, o in pairs(staticTrees) do markDisc(o.x, o.y, 40, b.tree) end
+  end
+  -- synthetic trees (offline tests / explicit-radius obstacles)
+  for _, o in pairs(synthTrees) do markDisc(o.x, o.y, o.r, b.tree) end
+  for i = 1, #dynTrees do
+    local o = dynTrees[i]
+    local cx, cy = cellOf(o.x, o.y)
+    if inside(cx, cy) then b.dyn[idx(cx, cy)] = 1 end
+  end
+  -- temporary stall-marked cells
+  local now = wallNow()
+  pruneStallBlocks(now)
+  for k in pairs(stallBlocks) do
+    local cx, cy = k:match("^(-?%d+),(-?%d+)$")
+    if cx then
+      cx, cy = tonumber(cx), tonumber(cy)
+      if inside(cx, cy) then b.dyn[idx(cx, cy)] = 1 end
+    end
+  end
+
+  -- map edge: keep everything 2 cells inside the world box
+  local edge = 2
+  for gx = 0, W - 1 do
+    for gy = 0, H - 1 do
+      if gx < edge or gy < edge or gx >= W - edge or gy >= H - edge then
+        b.hard[idx(gx, gy)] = 1
+      end
+    end
+  end
+  fillBlocked(b, n)
+  -- swap banks atomically (no yield between these assignments)
+  curBuf = b
+  hardMask, treeMask, dynMask, blocked = b.hard, b.tree, b.dyn, b.blocked
+  gzDirty = true
+  generation = generation + 1
+  perf.rebuilds = perf.rebuilds + 1
+  return staticCount + #dynTrees
+end
+nav.rebuild = rebuild
+
+-- mark one cell blocked until `secs` from now (stall recovery / server oracle)
+function nav.markBlockedCell(cx, cy, secs)
+  if not built then return false end
+  if not inside(cx, cy) then return false end
+  local key = cx .. "," .. cy
+  if not stallBlocks[key] then nav.stallBlockCount = (nav.stallBlockCount or 0) + 1 end
+  stallBlocks[key] = wallNow() + (secs or 20)
+  local i = idx(cx, cy)
+  dynMask[i] = 1
+  blocked[i] = 1
+  generation = generation + 1 -- invalidate the path cache
+  return true
+end
+
+function nav.markBlockedAt(x, y, secs)
+  local cx, cy = cellOf(x, y)
+  return nav.markBlockedCell(cx, cy, secs)
+end
+
+-- stall oracle (task-9 item 2): orders.lua reports every move order here; if the
+-- hero has not moved after stallWindow while the goal is still st.allClear
+-- far away, the engine refused the destination -> temporarily block that cell
+-- so the next BuildPath re-routes instead of the bot standing still forever.
+local stallState = { move = nil, marked = 0 }
+nav.stallWindow = 1.5     -- seconds a move order may produce no displacement
+nav.stallDist = 50        -- world units that count as "not moved"
+nav.stallRemain = 220     -- only while the goal is still this far away
+nav.stallBlockSecs = 20   -- how long the refused goal cell stays blocked
+
+function nav.noteMoveOrder(sx, sy, dx, dy)
+  if not built then return end
+  stallState.move = { sx = sx, sy = sy, dx = dx, dy = dy, at = wallNow() }
+end
+
+function nav.clearMoveOrder()
+  stallState.move = nil
+end
+
+function nav.stallCheck(hx, hy)
+  local mv = stallState.move
+  if not mv or not hx then return nil end
+  local now = wallNow()
+  if now - mv.at < nav.stallWindow then return nil end
+  local moved = math.sqrt((hx - mv.sx) ^ 2 + (hy - mv.sy) ^ 2)
+  local remaining = math.sqrt((mv.dx - hx) ^ 2 + (mv.dy - hy) ^ 2)
+  if moved >= nav.stallDist or remaining <= nav.stallRemain then
+    -- order did its job (moved, or close enough to the goal)
+    stallState.move = nil
+    return nil
+  end
+  -- refused by the engine: mark the goal cell + its ring, invalidate path cache
+  local cx, cy = cellOf(mv.dx, mv.dy)
+  nav.markBlockedCell(cx, cy, nav.stallBlockSecs)
+  nav.markBlockedCell(cx + 1, cy, nav.stallBlockSecs)
+  nav.markBlockedCell(cx - 1, cy, nav.stallBlockSecs)
+  nav.markBlockedCell(cx, cy + 1, nav.stallBlockSecs)
+  nav.markBlockedCell(cx, cy - 1, nav.stallBlockSecs)
+  stallState.move = nil
+  stallState.marked = stallState.marked + 1
+  perf.stalls = (perf.stalls or 0) + 1
+  logNav(nil, "[nav] stall x=%.0f y=%.0f goal=%.0f,%.0f blocked=%d", hx, hy, mv.dx, mv.dy,
+    nav.stallBlockCount)
+  return true, mv.dx, mv.dy
+end
+
+local function ensureBuilt()
+  if built then return end
+  alloc()
+  nav.rescan()
+end
+
+-- entity scan --------------------------------------------------------------
+-- Scans the live client entity list. Static classes (trees, buildings) are
+-- ACCUMULATED: the client may stream static props in/out with the camera, and
+-- the map never changes, so learning them over multiple scans is safe.
+-- Returns the obstacle count; sets nav.valid once a scan found map statics.
+function nav.rescan()
+  if not built then alloc() end
+  perf.scans = perf.scans + 1
+  local t0 = stampMs()
+  local ent = package.loaded["entity"]
+  if not ent then local ok, m = pcall(require, "entity"); if ok then ent = m end end
+  local E, EC = rawget(_G, "Entity"), rawget(_G, "EntityClass") or rawget(_G, "EC")
+  local newDyn = {}
+  local changed = false
+  local scanned = 0
+
+  if not ent then
+    logNav("no-entity", "[nav] scan FAILED: entity module unavailable; keeping previous grid (valid=%s)", tostring(valid))
+    return staticCount + #dynTrees
+  end
+
+  local ok, err = pcall(function()
+    for idn in ent.iter() do
+      local name = ent.designerName(idn)
+      if name and name ~= "" then
+        local kindTree = isTreeName(name)
+        local x, y, z, inst
+        if kindTree == "static" or kindTree == "dynamic" then
+          inst = ent.instance(idn)
+          x, y, z = readOrigin(idn, inst, E, EC)
+          if x and y and math.abs(x) < 8400 and math.abs(y) < 8400 then
+            if kindTree == "static" then
+              if addStaticTree(x, y, z) then changed = true end
+            else
+              newDyn[#newDyn + 1] = { x = x, y = y, z = z }
+            end
+          end
+        else
+          local kind = classifyHard(name)
+          if kind then
+            inst = ent.instance(idn)
+            x, y, z = readOrigin(idn, inst, E, EC)
+            if x and y then
+              if addStaticHard(x, y, z, hullRadius(inst, kind), name) then changed = true end
+            end
+          end
+        end
+        scanned = scanned + 1
+      end
+    end
+  end)
+  if not ok then
+    -- N2: never leave an empty grid behind a silent pcall failure
+    logNav("scan-error", "[nav] scan ERROR: %s; keeping previous grid (obstacles=%d valid=%s)",
+      tostring(err), staticCount + #dynTrees, tostring(valid))
+    return staticCount + #dynTrees
+  end
+
+  -- dynamic set changed?
+  local dynChanged = #newDyn ~= #dynTrees
+  if not dynChanged then
+    for i = 1, #newDyn do
+      local a, b = newDyn[i], dynTrees[i]
+      if math.abs(a.x - b.x) > 1 or math.abs(a.y - b.y) > 1 then dynChanged = true; break end
+    end
+  end
+  dynTrees = newDyn
+  if changed or dynChanged or perf.rebuilds == 0 then rebuild() end
+  local total = staticCount + #dynTrees
+  if total > 0 then valid = true end
+  lastRefresh = wallNow()
+  -- N1: one line per 10 s at most, with timings
+  local now = wallNow()
+  if now - lastRescanLog >= 10 then
+    lastRescanLog = now
+    local nTrees, nHard = 0, 0
+    for _ in pairs(staticTrees) do nTrees = nTrees + 1 end
+    for _ in pairs(staticHard) do nHard = nHard + 1 end
+    logNav(nil, "[nav] rescan ms=%.1f entities=%d obstacles=%d trees=%d hard=%d dyn=%d cells=%d valid=%s",
+      durMs(t0), scanned, total, nTrees, nHard, #dynTrees, W * H, tostring(valid))
+  end
+  if total == 0 then
+    logNav("scan-empty", "[nav] scan found no static obstacles (entity list not ready?) — bounds-only fallback active")
+  end
+  return total
+end
+
+function nav.refresh(hx, hy)
+  -- first tick after load: build immediately so the grid is ready before the
+  -- first script decision (previously only built on the first GridNav call)
+  if not built then
+    ensureBuilt()
+    if not built then return 0 end
+  end
+  local t = wallNow()
+  -- stall recovery (server-as-oracle): loader calls us once per tick; if a move
+  -- order is active and the hero has not moved, block the goal cell temporarily
+  -- so the next BuildPath re-routes (task-9 item 2).
+  if stallState.move then
+    if hx == nil then
+      local hx2, hy2 = heroXY()
+      if hx2 then hx, hy = hx2, hy2 end
+    end
+    if hx then pcall(nav.stallCheck, hx, hy) end
+  end
+  if t - lastRefresh < nav.refreshInterval then return staticCount + #dynTrees end
+  lastRefresh = t
+  return nav.rescan()
+end
+
+-- direct obstacle injection (offline tests / fallback data) ----------------
+-- list entries: {x=,y=,z=,r=,hard=true|false}
+--   hard=true  -> terrain mask disc of radius r (buildings)
+--   hard=false -> tree mask disc of radius r (synthetic tree field)
+function nav.setObstacles(list)
+  staticTrees, synthTrees, staticHard, dynTrees = {}, {}, {}, {}
+  staticCount = 0
+  groundZGrid = {}
+  gzSum, gzCnt = {}, {}
+  if not built then alloc() end
+  for _, o in ipairs(list or {}) do
+    local x, y, z, r = tonumber(o.x) or 0, tonumber(o.y) or 0, tonumber(o.z) or 0, tonumber(o.r) or 32
+    zSample(x, y, z)
+    if o.hard == false then
+      local key = string.format("S%d,%d,%d", r, math.floor(x / 8), math.floor(y / 8))
+      synthTrees[key] = { x = x, y = y, z = z, r = r }
+    else
+      local key = string.format("H%d,%d", math.floor(x / 32), math.floor(y / 32))
+      staticHard[key] = { x = x, y = y, z = z, r = r, name = "synthetic" }
+    end
+    staticCount = staticCount + 1
+  end
+  -- a synthetic grid is authoritative (offline tests / fallback data)
+  valid = true
+  rebuild()
+end
+
+-- traversability -----------------------------------------------------------
+local function cellWalkable(cx, cy, ignoreTrees)
+  if not inside(cx, cy) then return false end
+  local i = idx(cx, cy)
+  if hardMask[i] ~= 0 then return false end
+  if not ignoreTrees and (treeMask[i] ~= 0 or dynMask[i] ~= 0) then return false end
+  return true
+end
+
+-- npc-map boxes: {x0,y0,x1,y1} list
+local function boxBlocks(boxes, x, y)
+  for i = 1, #boxes do
+    local b = boxes[i]
+    if x >= b[1] and x <= b[3] and y >= b[2] and y <= b[4] then return true end
+  end
+  return false
+end
+
+local function walkableXY(x, y, ignoreTrees, boxes)
+  if x < nav.minX or x > nav.maxX or y < nav.minY or y > nav.maxY then return false end
+  local cx, cy = cellX(x), cellY(y)
+  if not cellWalkable(cx, cy, ignoreTrees) then return false end
+  if boxes and boxes.n > 0 and boxBlocks(boxes.boxes, x, y) then return false end
+  return true
+end
+
+-- ---- GridNav cell-flag contract (gridnav.md:33) ---------------------------
+-- GridNav.IsTraversable(pos, [flag], [flag_excluded]) returns (boolean, integer):
+-- the integer is the cell flag word, `flag` is the mask whose bits mean
+-- "not traversable" (default 0x1 = blocked, the engine BLOCKED bit used by the
+-- reference: `IsTraversable(pos, 0x1, 0x2)`), `flag_excluded` clears bits before
+-- the test. The 16.11 scripts call it with a single argument and only use the
+-- boolean; the loader-context parity check asserts the two-return contract.
+local FLAG_BLOCKED = 0x1   -- terrain building / static tree / temp tree / stall mark
+local FLAG_OUTSIDE = 0x2   -- outside the map box or grid-invalid fallback region
+local function band(a, b)
+  local r, pw = 0, 1
+  while a > 0 and b > 0 do
+    if (a % 2) == 1 and (b % 2) == 1 then r = r + pw end
+    a, b, pw = math.floor(a / 2), math.floor(b / 2), pw * 2
+  end
+  return r
+end
+
+local function traversableXY(x, y, flag, flagExcluded)
+  if x < nav.minX or x > nav.maxX or y < nav.minY or y > nav.maxY then
+    return false, FLAG_OUTSIDE + FLAG_BLOCKED
+  end
+  local cx, cy = cellX(x), cellY(y)
+  if not inside(cx, cy) then return false, FLAG_OUTSIDE + FLAG_BLOCKED end
+  if not valid then
+    -- no world data yet (lobby / entity list not ready): bounds-only fallback,
+    -- exactly the old behaviour, but logged once so it is never silent (N2)
+    logNav("not-valid", "[nav] grid not valid yet (no map statics scanned) — bounds-only IsTraversable fallback")
+    return true, 0
+  end
+  local flags = blocked[idx(cx, cy)] ~= 0 and FLAG_BLOCKED or 0
+  local effective = flags
+  local excl = tonumber(flagExcluded)
+  if excl and excl > 0 then effective = effective - band(effective, excl) end
+  local req = tonumber(flag)
+  local ok
+  if req and req > 0 then ok = band(effective, req) == 0 else ok = effective == 0 end
+  return ok, flags
+end
+
+-- documented GridNav entry point: (boolean, integer)
+function nav.IsTraversable(point, flag, flagExcluded)
+  if not built then ensureBuilt() end
+  if type(point) ~= "table" then return true, 0 end
+  local x, y = point.x or point[1] or 0, point.y or point[2] or 0
+  x, y = tonumber(x), tonumber(y)
+  if not x or not y or x ~= x or y ~= y then return false, FLAG_OUTSIDE end
+  return traversableXY(x, y, flag, flagExcluded)
+end
+
+-- backward-compatible single-value helper (internal callers, old loader wrapper)
+function nav.isTraversable(x, y, flag, flagExcluded)
+  if not built then ensureBuilt() end
+  if type(x) == "table" then x, y = x.x or x[1] or 0, x.y or x[2] or 0 end
+  x, y = tonumber(x), tonumber(y)
+  if not x or not y or x ~= x or y ~= y then return false end
+  return (traversableXY(x, y, flag, flagExcluded))
+end
+nav.isTraversableG = nav.IsTraversable
+
+-- raw cell flag word (0 = free, 1 = blocked, outside = 3); integer form
+function nav.cellFlags(x, y)
+  if not built then ensureBuilt() end
+  if type(x) == "table" then x, y = x.x or 0, x.y or 0 end
+  local cx, cy = cellX(x), cellY(y)
+  if not inside(cx, cy) then return FLAG_OUTSIDE + FLAG_BLOCKED end
+  if not valid then return 0 end
+  return blocked[idx(cx, cy)] ~= 0 and FLAG_BLOCKED or 0
+end
+nav.FLAG_BLOCKED, nav.FLAG_OUTSIDE = FLAG_BLOCKED, FLAG_OUTSIDE
+
+-- line of sight on the cell grid (supercover-ish sampling at cell/3 steps)
+-- returns false if any sampled cell is blocked or any npc box is hit
+local function clearLine(ax, ay, bx, by, ignoreTrees, boxes)
+  local dx, dy = bx - ax, by - ay
+  local dist = math.sqrt(dx * dx + dy * dy)
+  if dist < 1 then return walkableXY(ax, ay, ignoreTrees, boxes) end
+  local step = nav.cell / 2
+  local n = math.ceil(dist / step)
+  for s = 0, n do
+    local t = s / n
+    local x, y = ax + dx * t, ay + dy * t
+    if not walkableXY(x, y, ignoreTrees, boxes) then return false end
+  end
+  return true
+end
+
+-- nearest walkable cell (ring search); prefers cells in the direction of
+-- (towardX,towardY) when several candidates share the same ring
+local function nearestFree(cx, cy, ignoreTrees, boxes, maxR)
+  local wx, wy = cellCenter(cx, cy)
+  if walkableXY(wx, wy, ignoreTrees, boxes) then return cx, cy end
+  maxR = maxR or 10
+  for r = 1, maxR do
+    local bestX, bestY, bestD
+    for oy = -r, r do
+      for ox = -r, r do
+        if math.abs(ox) == r or math.abs(oy) == r then
+          local gx, gy = cx + ox, cy + oy
+          if inside(gx, gy) then
+            local x, y = cellCenter(gx, gy)
+            if walkableXY(x, y, ignoreTrees, boxes) then
+              local d = ox * ox + oy * oy
+              if not bestD or d < bestD then bestX, bestY, bestD = gx, gy, d end
+            end
+          end
+        end
+      end
+    end
+    if bestX then return bestX, bestY end
+  end
+  return nil
+end
+
+-- A* -----------------------------------------------------------------------
+local SQRT2 = math.sqrt(2)
+local DIRS = {
+  { 1, 0, 1 }, { -1, 0, 1 }, { 0, 1, 1 }, { 0, -1, 1 },
+  { 1, 1, SQRT2 }, { 1, -1, SQRT2 }, { -1, 1, SQRT2 }, { -1, -1, SQRT2 },
+}
+local A_MAX_EXPAND = 48000
+
+-- Binary min-heap in FFI arrays (N3): Lua-table heaps with #/nil churn dominated
+-- A* cost (~15 ms for a 12k-unit path). Fixed-size int32/double arrays with an
+-- explicit counter are allocation-free and JIT-friendly.
+local HMAX = 1 << 16
+local hItem, hKey, hN
+
+local function heapReset()
+  hN = 0
+end
+
+local function heapPush(item, key)
+  local n = hN + 1
+  if n > HMAX then return end
+  local it, ky = hItem, hKey
+  it[n], ky[n] = item, key
+  while n > 1 do
+    local p = math.floor(n / 2)
+    if ky[p] <= ky[n] then break end
+    it[p], it[n] = it[n], it[p]
+    ky[p], ky[n] = ky[n], ky[p]
+    n = p
+  end
+  hN = hN + 1
+end
+
+local function heapPop()
+  local n = hN
+  if n == 0 then return nil end
+  local it, ky = hItem, hKey
+  local top = it[1]
+  it[1], ky[1] = it[n], ky[n]
+  n = n - 1
+  hN = n
+  local i = 1
+  while true do
+    local l, r, best = i * 2, i * 2 + 1, i
+    if l <= n and ky[l] < ky[best] then best = l end
+    if r <= n and ky[r] < ky[best] then best = r end
+    if best == i then break end
+    it[i], it[best] = it[best], it[i]
+    ky[i], ky[best] = ky[best], ky[i]
+    i = best
+  end
+  return top
+end
+
+-- stamp arrays: reset O(1) per search instead of clearing 67k entries
+local gScore, cameFrom, closedStamp, gStamp
+local searchGen = 0
+local function ensureSearchBuffers()
+  if gScore then return end
+  local n = W * H
+  if ok_ffi then
+    gScore = ffi.new("float[?]", n)
+    cameFrom = ffi.new("int32_t[?]", n)
+    closedStamp = ffi.new("int32_t[?]", n)
+    gStamp = ffi.new("int32_t[?]", n)
+    hItem = ffi.new("int32_t[?]", HMAX)
+    hKey = ffi.new("double[?]", HMAX)
+    ffi.C.memset(closedStamp, 0, n * 4)
+    ffi.C.memset(gStamp, 0, n * 4)
+  else
+    gScore, cameFrom, closedStamp, gStamp = {}, {}, {}, {}
+    hItem, hKey = {}, {}
+  end
+  hN = 0
+end
+
+local function octile(ax, ay, bx, by)
+  local dx, dy = math.abs(bx - ax), math.abs(by - ay)
+  if dx > dy then return dx + 0.41421356 * dy end
+  return dy + 0.41421356 * dx
+end
+
+-- returns startCell,goalCell path cell list or nil
+local function astar(scx, scy, dcx, dcy, ignoreTrees, boxes)
+  ensureSearchBuffers()
+  searchGen = searchGen + 1
+  if searchGen > 2000000000 then
+    searchGen = 1
+    if ok_ffi then ffi.C.memset(closedStamp, 0, W * H * 4); ffi.C.memset(gStamp, 0, W * H * 4)
+    else closedStamp, gStamp = {}, {} end
+  end
+  heapReset()
+  local start, goal = idx(scx, scy), idx(dcx, dcy)
+  gScore[start], gStamp[start] = 0, searchGen
+  cameFrom[start] = -1
+  heapPush(start, nav.heuristicWeight * octile(scx, scy, dcx, dcy))
+  local expanded = 0
+  local bestIdx, bestH = nil, nil
+  local function reconstruct(from)
+    local cells = {}
+    local c = from
+    while c ~= -1 and c ~= start do
+      cells[#cells + 1] = c
+      c = cameFrom[c]
+      if #cells > 8192 then return nil end
+    end
+    return cells -- goal -> ... (start excluded)
+  end
+  while true do
+    local cur = heapPop()
+    if not cur then break end
+    if closedStamp[cur] ~= searchGen then
+      closedStamp[cur] = searchGen
+      if cur == goal then
+        return reconstruct(goal), expanded, false
+      end
+      expanded = expanded + 1
+      -- N6: remember the closed cell closest to the goal (partial-path fallback)
+      local ccx, ccy = cur % W, math.floor(cur / W)
+      local hcur = octile(ccx, ccy, dcx, dcy)
+      if not bestH or hcur < bestH then bestIdx, bestH = cur, hcur end
+      if expanded > A_MAX_EXPAND then break end
+      local g = gScore[cur]
+      for d = 1, 8 do
+        local dd = DIRS[d]
+        local nx, ny = ccx + dd[1], ccy + dd[2]
+        if inside(nx, ny) then
+          -- inlined cell test (N3): the mask read is the hot path, avoid the
+          -- generic walkableXY call + cell-center math unless an npc map exists
+          local ni = idx(nx, ny)
+          local okCell
+          if hardMask[ni] == 0 and (ignoreTrees or (treeMask[ni] == 0 and dynMask[ni] == 0)) then
+            okCell = true
+            if boxes then
+              local wx, wy = cellCenter(nx, ny)
+              okCell = not boxBlocks(boxes.boxes, wx, wy)
+            end
+          else
+            okCell = false
+          end
+          if okCell and dd[1] ~= 0 and dd[2] ~= 0 then
+            -- no corner cutting: both orthogonal neighbours must be free
+            local i1, i2 = idx(ccx + dd[1], ccy), idx(ccx, ccy + dd[2])
+            if hardMask[i1] ~= 0 or (not ignoreTrees and (treeMask[i1] ~= 0 or dynMask[i1] ~= 0)) then
+              okCell = false
+            elseif hardMask[i2] ~= 0 or (not ignoreTrees and (treeMask[i2] ~= 0 or dynMask[i2] ~= 0)) then
+              okCell = false
+            elseif boxes then
+              local ax, ay = cellCenter(ccx + dd[1], ccy)
+              local bx, by = cellCenter(ccx, ccy + dd[2])
+              if boxBlocks(boxes.boxes, ax, ay) or boxBlocks(boxes.boxes, bx, by) then okCell = false end
+            end
+          end
+          if okCell then
+            local ng = g + dd[3]
+            if gStamp[ni] ~= searchGen or ng < gScore[ni] then
+              gScore[ni], gStamp[ni] = ng, searchGen
+              cameFrom[ni] = cur
+              heapPush(ni, ng + nav.heuristicWeight * octile(nx, ny, dcx, dcy))
+            end
+          end
+        end
+      end
+    end
+  end
+  -- unreachable within the budget: best-effort partial path to the closest cell
+  if bestIdx then
+    local cells = reconstruct(bestIdx)
+    if cells and #cells > 0 then return cells, expanded, true end
+  end
+  return nil, expanded, false
+end
+
+-- path cache ---------------------------------------------------------------
+local cache, cacheN = {}, 0
+local function cacheKey(scx, scy, dcx, dcy, ignoreTrees, mapId)
+  return (ignoreTrees and 1 or 0) .. ":" .. (mapId or 0) .. ":" .. scx .. "," .. scy .. "," .. dcx .. "," .. dcy
+end
+
+local function cacheGet(key)
+  local e = cache[key]
+  if e and e.gen == generation then
+    perf.cacheHits = perf.cacheHits + 1
+    local out = {}
+    for i = 1, #e.path do out[i] = e.path[i] end
+    return out
+  end
+  if e then cache[key] = nil end
+  return nil
+end
+
+local function cachePut(key, path)
+  cacheN = cacheN + 1
+  if cacheN > nav.pathCacheSize then
+    -- cheap eviction: drop the first hash key we can find (old entries expire
+    -- on generation change anyway, which happens whenever obstacles change)
+    for k in pairs(cache) do cache[k] = nil; break end
+    cacheN = nav.pathCacheSize
+  end
+  cache[key] = { gen = generation, path = path, at = wallNow() }
+end
+
+-- main path builder --------------------------------------------------------
+-- buildPath(sx, sy, dx, dy, ignoreTrees, npcMap, allowIncomplete)
+-- returns array of {x,y,z} waypoints: start EXCLUDED, destination INCLUDED
+-- (the new Self Play scripts append the destination themselves when the last
+-- waypoint is >5 units away, so ending short is safe).
+function nav.buildPath(sx, sy, dx, dy, ignoreTrees, npcMap, allowIncomplete)
+  if not built then ensureBuilt() end
+  sx, sy, dx, dy = tonumber(sx), tonumber(sy), tonumber(dx), tonumber(dy)
+  if not sx or not sy or not dx or not dy then return {} end
+  local nmap = npcMap
+  -- released/finished maps are ignored defensively (identity-dict lifecycle)
+  if nmap and (nmap.released or not nmap.boxes or (nmap.n or 0) == 0) then nmap = nil end
+  local mapId = (nmap and nmap.id) or 0
+  if nmap and nav.npcMapStats then nav.npcMapStats.pathUses = nav.npcMapStats.pathUses + 1 end
+  local scx, scy = cellX(sx), cellY(sy)
+  local dcx, dcy = cellX(dx), cellY(dy)
+  if not inside(scx, scy) or not inside(dcx, dcy) then return {} end
+  if scx == dcx and scy == dcy then
+    if walkableXY(dx, dy, ignoreTrees, nmap) then
+      return { { x = dx, y = dy, z = nav.groundZ(dx, dy) } }
+    end
+    return {}
+  end
+
+  perf.paths = perf.paths + 1
+  local tPath = stampMs()
+  local key = cacheKey(scx, scy, dcx, dcy, ignoreTrees, mapId)
+  local hit = cacheGet(key)
+  if hit then return hit end
+
+  -- no world data yet: bounds-only straight line (old behaviour, logged once so
+  -- it is never silent — reviewer N2)
+  if not valid then
+    logNav("path-not-valid", "[nav] grid not valid yet (no map statics) — straight-line BuildPath fallback")
+    return { { x = dx, y = dy, z = nav.groundZ(dx, dy) } }
+  end
+
+  -- fast path: straight line already clear (most lane/jungle moves)
+  local goalFree = walkableXY(dx, dy, ignoreTrees, nmap)
+  if goalFree and clearLine(sx, sy, dx, dy, ignoreTrees, nmap) then
+    local path = { { x = dx, y = dy, z = nav.groundZ(dx, dy) } }
+    cachePut(key, path)
+    return path
+  end
+
+  -- snap blocked endpoints to the closest free cell
+  local sOK = walkableXY(sx, sy, ignoreTrees, nmap)
+  local gOK = goalFree
+  local s2x, s2y, d2x, d2y = scx, scy, dcx, dcy
+  if not sOK then
+    s2x, s2y = nearestFree(scx, scy, ignoreTrees, nmap, 10)
+    if not s2x then return {} end
+  end
+  if not gOK then
+    d2x, d2y = nearestFree(dcx, dcy, ignoreTrees, nmap, 12)
+    if not d2x then return {} end
+  end
+
+  local t0 = stampMs()
+  local cells, expanded, incomplete = astar(s2x, s2y, d2x, d2y, ignoreTrees, nmap)
+  perf.astar = perf.astar + 1
+  perf.lastAstarMs = durMs(t0)
+  perf.expanded = expanded or 0
+  if not cells then
+    perf.failedPaths = perf.failedPaths + 1
+    logNav(nil, "[nav] path FAILED from %d,%d to %d,%d treeWalking=%s expanded=%d (no reachable cell)",
+      s2x, s2y, d2x, d2y, tostring(ignoreTrees == true), expanded or 0)
+    return {}
+  end
+  if incomplete and not nav.partialPaths then
+    -- N6: reachability budget exhausted. Explicit empty path + rate-limited log
+    -- (never a silent {}) so callers (navigation.safePath / detour / stall
+    -- oracle) can distinguish "no path" from "short path".
+    perf.incomplete = perf.incomplete + 1
+    local nowFail = wallNow()
+    if nowFail - lastFailLog > 2 then
+      lastFailLog = nowFail
+      logNav(nil, "[nav] path INCOMPLETE from %d,%d to %d,%d treeWalking=%s expanded=%d bestDist=%.0f (partialPaths=false -> empty)",
+        s2x, s2y, d2x, d2y, tostring(ignoreTrees == true), expanded or 0,
+        math.sqrt((d2x - s2x) ^ 2 + (d2y - s2y) ^ 2))
+    end
+    return {}
+  end
+
+  -- cells is goal -> ... ; build world waypoint list start -> goal
+  local raw = {}
+  for i = #cells, 1, -1 do
+    local ci = cells[i]
+    local cx, cy = ci % W, math.floor(ci / W)
+    local x, y = cellCenter(cx, cy)
+    raw[#raw + 1] = { x = x, y = y }
+  end
+  raw[1] = { x = sx, y = sy } -- start point (kept only for smoothing pass)
+  if #raw == 0 then return {} end
+
+  -- line-of-sight smoothing (string pulling). Bounded doubling + binary refine:
+  -- O(#waypoints * log) clearLine calls instead of the old O(n^2) backward scan
+  -- (N3: this dominated the long-path cost: 9 ms -> measure offline).
+  local function maxVisible(from)
+    local n = #raw
+    local i0 = from
+    if i0 + 1 > n then return n end
+    if not clearLine(raw[i0].x, raw[i0].y, raw[i0 + 1].x, raw[i0 + 1].y, ignoreTrees, nmap) then
+      return i0 + 1
+    end
+    local best = i0 + 1
+    local step = 2
+    local fail
+    while true do
+      local j = i0 + step
+      if j >= n then
+        if clearLine(raw[i0].x, raw[i0].y, raw[n].x, raw[n].y, ignoreTrees, nmap) then best = n end
+        break
+      end
+      if clearLine(raw[i0].x, raw[i0].y, raw[j].x, raw[j].y, ignoreTrees, nmap) then
+        best = j
+        step = step * 2
+      else
+        fail = j
+        break
+      end
+    end
+    if fail then
+      local lo, hi = best, fail
+      while hi - lo > 1 do
+        local mid = math.floor((lo + hi) / 2)
+        if clearLine(raw[i0].x, raw[i0].y, raw[mid].x, raw[mid].y, ignoreTrees, nmap) then lo = mid else hi = mid end
+      end
+      best = lo
+    end
+    return best
+  end
+  local smooth = { raw[1] }
+  local i = 1
+  while i < #raw do
+    i = maxVisible(i)
+    smooth[#smooth + 1] = raw[i]
+  end
+  -- destination: use the exact requested point when it was walkable AND the
+  -- search reached the goal; a partial (incomplete) path stops early (N6)
+  local last = smooth[#smooth]
+  if goalFree and not incomplete then
+    smooth[#smooth] = { x = dx, y = dy }
+  elseif math.abs(last.x - dx) < 1 and math.abs(last.y - dy) < 1 then
+    smooth[#smooth] = { x = dx, y = dy }
+  end
+  -- drop the start waypoint; waypoints get ground Z from the height grid (N8)
+  local out, len = {}, 0
+  local px, py = sx, sy
+  for k = 2, #smooth do
+    local p = smooth[k]
+    len = len + math.sqrt((p.x - px) ^ 2 + (p.y - py) ^ 2)
+    px, py = p.x, p.y
+    out[#out + 1] = { x = p.x, y = p.y, z = nav.groundZ(p.x, p.y) }
+  end
+  if #out == 0 then
+    out[1] = { x = dx, y = dy, z = nav.groundZ(dx, dy) }
+  end
+  if not incomplete then cachePut(key, out) end
+  -- task-9 instrumentation: [nav] path line every 10 s, on slow paths, and on
+  -- incomplete (partial) paths
+  local now = wallNow()
+  perf.lastPathMs = durMs(tPath)
+  if now - lastPathLog >= 10 or perf.lastPathMs > 8 or incomplete or perf.paths <= 5 then
+    lastPathLog = now
+    logNav(nil, "[nav] path ms=%.2f waypoints=%d len=%.0f straight=%.0f treeWalking=%s expanded=%d incomplete=%s npcMap=%s",
+      perf.lastPathMs, #out, len, math.sqrt((dx - sx) ^ 2 + (dy - sy) ^ 2),
+      tostring(ignoreTrees == true), expanded or 0, tostring(incomplete),
+      nmap and string.format("id=%d units=%d", nmap.id, nmap.unitCount or (nmap.n or 0)) or "nil")
+  end
+  return out
+end
+
+-- GridNav-compatible wrappers ---------------------------------------------
+-- (nav.IsTraversable implemented above with the documented 2-value contract)
+
+function nav.IsTraversableFromTo(a, b, ignoreTrees, npcMap)
+  if type(a) ~= "table" or type(b) ~= "table" then return false end
+  local ax, ay = a.x or a[1] or 0, a.y or a[2] or 0
+  local bx, by = b.x or b[1] or 0, b.y or b[2] or 0
+  if not built then ensureBuilt() end
+  local nmap = npcMap
+  if nmap and (not nmap.boxes or nmap.n == 0) then nmap = nil end
+  if clearLine(ax, ay, bx, by, ignoreTrees == true, nmap) then return true end
+  return #nav.buildPath(ax, ay, bx, by, ignoreTrees == true, npcMap) > 0
+end
+
+-- CreateNpcMap: obstacle boxes for NPCs (creep avoidance). excluded = array of
+-- entity identities; sizes = { [identity] = {left,top,right,bottom} }.
+local npcMapId = 0
+local unitCache = { at = -1e9, list = {} }
+local function unitSnapshot()
+  local t = wallNow()
+  if t - unitCache.at < 0.2 then return unitCache.list end
+  unitCache.at = t
+  local list = {}
+  local ent = package.loaded["entity"]
+  if not ent then local ok, m = pcall(require, "entity"); if ok then ent = m end end
+  if not ent then unitCache.list = list; return list end
+  local schema = package.loaded["schema"]
+  local oHull
+  if schema and schema.offsetOf then
+    local ok, off = pcall(schema.offsetOf, "C_DOTA_BaseNPC", "m_flHullRadius"); if ok then oHull = off end
+  end
+  local EC, E = rawget(_G, "EntityClass") or rawget(_G, "EC"), rawget(_G, "Entity")
+  pcall(function()
+    for idn in ent.iter() do
+      local name = ent.designerName(idn)
+      if name and name:find("npc_dota", 1, true) then
+        local inst = ent.instance(idn)
+        -- readOrigin handles both api contracts (Vector return or x,y,z returns)
+        local x, y = readOrigin(idn, inst, E, EC)
+        if x and y then
+          local r = 32
+          if oHull and inst then
+            local ok2, v = pcall(function() return tonumber(ffi.cast("float*", inst + oHull)[0]) end)
+            if ok2 and v and v > 8 and v < 512 then r = v end
+          end
+          list[#list + 1] = { identity = idn, x = x, y = y, r = r, name = name }
+        end
+      end
+    end
+  end)
+  unitCache.list = list
+  return list
+end
+
+-- NPC obstacle map lifecycle (task-24 §4 risk item) --------------------------
+-- A GridNavNpcMap is a real per-identity dictionary:
+--   map.units[entityIdentity] = { x, y, hx, hy, r, name }  (NPC collision boxes)
+-- plus a flat AABB list used by the pathfinder (map.boxes). Release is
+-- idempotent (double release safe), clears all references and updates leak
+-- counters; navigation.creepPath creates one map per detour decision and
+-- last_hit.lua:599 / navigation.lua:300 release it.
+local npcMaps = {}          -- id -> live map (for leak accounting)
+local npcMapLive, npcMapMaxLive = 0, 0
+local npcMapCreated, npcMapReleased = 0, 0
+local npcMapLogAt = -1e9
+nav.npcMapStats = { created = 0, released = 0, live = 0, maxLive = 0, pathUses = 0,
+  leaks = 0, doubleRelease = 0, releasedMapBuildPath = 0 }
+
+local function npcMapLog(fmt, ...)
+  local now = wallNow()
+  if now - npcMapLogAt < 2 then return end
+  npcMapLogAt = now
+  logNav(nil, fmt, ...)
+end
+
+function nav.CreateNpcMap(excluded, includeTempTrees, customSizes)
+  if not built then ensureBuilt() end
+  npcMapId = npcMapId + 1
+  local ex, exCount = {}, 0
+  for i = 1, #(excluded or {}) do
+    if excluded[i] ~= nil then ex[excluded[i]] = true; exCount = exCount + 1 end
+  end
+  local units, boxes, n = {}, { n = 0 }, 0
+  local function addBox(x, y, halfX, halfY)
+    n = n + 1
+    boxes[n] = { x - halfX, y - halfY, x + halfX, y + halfY }
+  end
+  for _, u in ipairs(unitSnapshot()) do
+    if u.identity ~= nil and not ex[u.identity] then
+      local size = customSizes and customSizes[u.identity]
+      local halfX, halfY = u.r, u.r
+      if size then
+        local l = tonumber(size[1]) or u.r
+        local tp = tonumber(size[2]) or u.r
+        local r = tonumber(size[3]) or u.r
+        local b = tonumber(size[4]) or u.r
+        halfX, halfY = math.max(l, r), math.max(tp, b)
+      end
+      units[u.identity] = { x = u.x, y = u.y, hx = halfX, hy = halfY, r = u.r, name = u.name }
+      addBox(u.x, u.y, halfX, halfY)
+    end
+  end
+  local tempN = 0
+  if includeTempTrees then
+    for i = 1, #dynTrees do
+      addBox(dynTrees[i].x, dynTrees[i].y, 32, 32)
+      tempN = tempN + 1
+    end
+  end
+  boxes.n = n
+  local map = {
+    id = npcMapId, boxes = n > 0 and boxes or nil, n = n,
+    units = units, unitCount = n - tempN, tempTreeCount = tempN,
+    excludedCount = exCount, includeTempTrees = includeTempTrees == true,
+    created = wallNow(), released = false,
+  }
+  npcMaps[npcMapId] = map
+  npcMapLive = npcMapLive + 1
+  if npcMapLive > npcMapMaxLive then npcMapMaxLive = npcMapLive end
+  npcMapCreated = npcMapCreated + 1
+  nav.npcMapStats.created = npcMapCreated
+  nav.npcMapStats.live = npcMapLive
+  nav.npcMapStats.maxLive = npcMapMaxLive
+  npcMapLog("[nav] npcMap create id=%d units=%d boxes=%d excluded=%d tempTrees=%d live=%d",
+    npcMapId, map.unitCount, n, exCount, tempN, npcMapLive)
+  return map
+end
+
+-- idempotent: safe to call twice, with nil, or with an already released map
+function nav.ReleaseNpcMap(map)
+  if map == nil then return true end
+  if type(map) ~= "table" then return false end
+  if map.released then
+    nav.npcMapStats.doubleRelease = nav.npcMapStats.doubleRelease + 1
+    return true
+  end
+  map.released = true
+  if map.id ~= nil and npcMaps[map.id] == map then npcMaps[map.id] = nil end
+  map.boxes = nil
+  map.units = nil
+  npcMapReleased = npcMapReleased + 1
+  if npcMapLive > 0 then npcMapLive = npcMapLive - 1 end
+  nav.npcMapStats.released = npcMapReleased
+  nav.npcMapStats.live = npcMapLive
+  npcMapLog("[nav] npcMap release id=%s live=%d created=%d released=%d",
+    tostring(map.id), npcMapLive, npcMapCreated, npcMapReleased)
+  return true
+end
+
+function nav.npcMapLiveCount() return npcMapLive end
+function nav.npcMapLeaks()
+  local n = 0
+  for _ in pairs(npcMaps) do n = n + 1 end
+  nav.npcMapStats.leaks = n
+  return n
+end
+
+-- debug / diagnostics ------------------------------------------------------
+function nav.stats()
+  return {
+    cells = (W or 0) * (H or 0), w = W or 0, h = H or 0, cell = nav.cell,
+    obstacles = staticCount + #dynTrees, static = staticCount, dyn = #dynTrees,
+    built = built, valid = valid, generation = generation,
+    stallBlocked = nav.stallBlockCount or 0,
+    npcMaps = nav.npcMapStats,
+    trees = (function() local n = 0; for _ in pairs(staticTrees) do n = n + 1 end; return n end)(),
+    synthTrees = (function() local n = 0; for _ in pairs(synthTrees) do n = n + 1 end; return n end)(),
+    hard = (function() local n = 0; for _ in pairs(staticHard) do n = n + 1 end; return n end)(),
+    perf = perf,
+  }
+end
+
+function nav.benchmark(n)
+  n = n or 200
+  if not built then ensureBuilt() end
+  local pts = {}
+  for i = 1, 16 do
+    local a = (i / 16) * math.pi * 2
+    pts[#pts + 1] = { x = math.cos(a) * 5200, y = math.sin(a) * 5200 }
+  end
+  local t0 = os.clock(); local q = 0
+  for i = 1, n * 50 do
+    local p = pts[(i % #pts) + 1]
+    if nav.isTraversable(p.x * 0.5, p.y * 0.5) then q = q + 1 end
+  end
+  local tIso = (os.clock() - t0) / (n * 50)
+  t0 = os.clock()
+  local built = 0
+  for i = 1, n do
+    local a = pts[(i % #pts) + 1]
+    local b = pts[((i + 5) % #pts) + 1]
+    if #nav.buildPath(0, 0, a.x, a.y, false) > 0 then built = built + 1 end
+  end
+  local tPath = (os.clock() - t0) / n
+  cache = {}; cacheN = 0 -- do not let the benchmark pollute the cache
+  return { isoUs = tIso * 1e6, pathMs = tPath * 1000, built = built, n = n,
+           astarMs = perf.lastAstarMs, rebuilds = perf.rebuilds }
+end
+
+function nav.reset()
+  staticTrees, synthTrees, staticHard, dynTrees = {}, {}, {}, {}
+  staticCount = 0
+  groundZGrid = {}
+  gzSum, gzCnt = {}, {}
+  cache, cacheN = {}, 0
+  if built then rebuild() end
+end
+
+function nav.dumpObstacles(maxN)
+  local out = {}
+  local n = 0
+  for _, o in pairs(staticHard) do
+    n = n + 1
+    if n <= (maxN or 10000) then out[#out + 1] = { x = o.x, y = o.y, r = o.r, hard = true, name = o.name } end
+  end
+  for _, o in pairs(staticTrees) do
+    n = n + 1
+    if n <= (maxN or 10000) then out[#out + 1] = { x = o.x, y = o.y, z = o.z, hard = false, kind = "tree" } end
+  end
+  for i = 1, #dynTrees do
+    out[#out + 1] = { x = dynTrees[i].x, y = dynTrees[i].y, z = dynTrees[i].z, hard = false, kind = "temp_tree" }
+  end
+  return out
+end
+
+return nav
+
+
+
+
+
+
+
+
+
+
+
+
+
+

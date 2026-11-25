@@ -1,0 +1,3 @@
+dota pid=10764 fg pid=10764 foreground_ok=True
+key vk=192 scan=41 pressed+released
+done 

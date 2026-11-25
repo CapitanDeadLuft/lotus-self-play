@@ -1,0 +1,5 @@
+integrity: 12288
+FindWindowA-first hwnd=3151194 pid=33844 rect=(9,34,343,269) | dota hwnd=106562370
+dota pid=10616 fg pid=10616 foreground_ok=True
+clicked at 88,808
+done 

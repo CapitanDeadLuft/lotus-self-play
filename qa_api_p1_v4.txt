@@ -1,0 +1,250 @@
+20:40:27 === API_P1 BEGIN === okSchema=	true	okEntity=	true	client=	0x7FF8715E0000	wall=	107512.4
+20:40:27 [1] gamerules=	0x255AAB30000	proxy=	0x25585D72400	state=	5	mode=	1	matchid=	0	gamestart=	236.367	pregame=	146.367	creepspawn=	206.367	gameend=	0.000	goldtime=	0.000	glyphgood=	416.367	glyphbad=	1946.133
+20:40:27 [1] gamerules sim/anim (C_BaseEntity 0x3B4/0x3B8)=	0.000/0.000
+20:40:27 [entity] iter build ms=0.00 n=5856 tickBuilds=1 total=1 cached=0
+20:40:27 [ev] OnEntityHurt source=npc_dota_hero_viper target=npc_dota_creep_lane damage=0 ability=nil
+20:40:27 [perf] slow poll mode=draw cost=687.0ms scan=5.0ms fire=682.0ms top=OnUnitAnimation(680.0ms) polls=1748
+20:40:27 [api] calls/5s: 	GetAbsOrigin=131556 GetAttackRange=133 GetAttackSpeed=12 GetGameTime=115 GetHealth=48 GetIndex=69 GetPlayerID=52 GetTeamData=20 GetTeamNum=28701 GetTeamPlayer=20 GetTrueDamage=4 GetUnitName=39 HasModifier=58 IsDormant=519 IsEntity=958 SecondsPerAttack=12
+20:40:27 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=0.694 detect=0.667 type=0 sequenceName=attack
+20:40:28 [perf] slow poll mode=draw cost=748.0ms scan=17.0ms fire=731.0ms top=OnUnitAnimation(731.0ms) polls=1749
+20:40:28 [hud] cmds=49 text=18 world=0 overlaps=0 offscreen=0
+20:40:28 [2] entities=	5856	uniqueNames=	158
+20:40:28 [2] names=	ability_capture x5 | ability_lamp_use x5 | ability_lotus_pool x2 | ability_xp_fountain x2 | abyssal_underlord_portal_warp x7 | additional_wearable x3 | ambient_creatures x221 | axe_battle_hunger x3 | axe_berserkers_call x3 | axe_counter_helix x3 | axe_culling_blade x3 | axe_one_man_army x3 | backdoor_protection x3 | backdoor_protection_in_base x35 | courier_autodeliver x5 | courier_burst x5 | courier_go_to_enemy_secretshop x5 | courier_go_to_secretshop x5 | courier_go_to_sideshop x5 | courier_go_to_sideshop2 x5 | courier_morph x5 | courier_return_stash_items x5 | courier_shield x5 | courier_take_stash_and_transfer_items x5 | courier_take_stash_items x5 | courier_transfer_items x5 | courier_transfer_items_to_other_player x5 | creep_irresolute x39 | creep_piercing x14 | creep_siege x47 | dota_data_radiant x1 | dota_fogofwartempviewers x1 | dota_gamemanager x1 | dota_gamerules x1 | dota_item_rune_spawner_bounty x2 | dota_item_rune_spawner_powerup x2 | dota_item_wearable x283 | dota_player_controller x10 | dota_portrait_base_model x1 | dota_portrait_entity x17 | dota_portrait_world_callback_handler x219 | dota_reflection_skybox x1 | dota_scene_entity x18 | dota_world_particle_system x759 | drow_ranger_frost_arrows x3 | drow_ranger_glacier x3 | drow_ranger_marksmanship x3 | drow_ranger_multishot x3 | drow_ranger_trueshot x3 | drow_ranger_wave_of_silence x3 | ent_dota_fountain x2 | ent_dota_halloffame x2 | ent_dota_lightinfo x40 | ent_dota_neutral_item_stash x2 | ent_dota_shop x4 | ent_dota_tree x2475 | env_deferred_light_client_only x326 | env_deferred_spot_light_client_only x2 | env_fog_controller x2 | env_global_light x49 | env_sky x1 | env_tonemap_controller x1 | env_wind_clientside x1 | flagbearer_creep_aura_effect x5 | game_ragdoll_manager x1 | generic_hidden x7 | info_particle_system x275 | info_player_start_badguys x10 | info_player_start_dota x4 | info_player_start_goodguys x10 | info_target x4 | info_world_layer x4 | item_aether_lens x1 | item_black_king_bar x1 | item_blade_mail x1 | item_blink x2 | item_bracer x2 | item_claymore x1 | item_enhancement_brawny x1 | item_enhancement_quickened x1 | item_enhancement_vital x1 | item_falcon_blade x1 | item_flask x1 | item_foragers_health x1 | item_foragers_kit x1 | item_foragers_mana x1 | item_foragers_stats x1 | item_glimmer_cape x1 | item_hurricane_pike x1 | item_manta x1 | item_null_talisman x1 | item_occult_bracelet x1 | item_ogre_axe x1 | item_phase_boots x1 | item_power_treads x1 | item_recipe_aether_lens x1 | item_shivas_guard x1 | item_talisman_of_evasion x1 | item_tpscroll x5 | item_tranquil_boots x1 | item_travel_boots x1 | item_ultimate_scepter x1 | item_ward_dispenser x1 | item_ward_observer x1 | item_weighted_dice x1 | lion_finger_of_death x1 | lion_impale x1 | lion_mana_drain x1 | lion_to_hell_and_back x1 | lion_voodoo x1 | npc_dota_barracks x10 | npc_dota_base x5 | npc_dota_base_blocker x2 | npc_dota_courier x5 | npc_dota_creep_lane x53 | npc_dota_creep_siege x4 | npc_dota_effigy_stat
+20:40:28 [2] playerVecCandidates=	4
+20:40:28 [2]   cand 	dota_fogofwartempviewers idx=102 cnt608=32 ptr608=0x2556DCA8D00 cnt670=0
+20:40:28 [2]   cand 	 idx=67 cnt608=5 ptr608=0x2556DFFA0E0 cnt670=0
+20:40:28 [2]   cand 	 idx=68 cnt608=5 ptr608=0x25438945E40 cnt670=0
+20:40:28 [2]   cand 	 idx=80 cnt608=10 ptr608=0x25441298000 cnt670=10
+20:40:28 [entity] iter build ms=0.00 n=5862 tickBuilds=2 total=2 cached=0
+20:40:28 [3] localController inst=	0x2559291E000	pid=	0	team=	2	assigned=	npc_dota_hero_treant	steamid=	7.6561198612901e+16	name=	Heron	sim=	1945.533
+20:40:28 [3] ctrl order times 0x940=	2216.765	0x944=	2216.799	0x948(latency)=	0.054	nextSeq(0x9B8)=	227	ordersCnt(0x9A0)=	0
+20:40:28 [3] localHero idn=	0x25580696898	inst=	0x255D0E2E000	name=	npc_dota_hero_treant	sim(0x3B8)=	0.000	anim(0x3B4)=	2011.867	create(0x3E0)=	146.433	hp=	736
+20:40:28 [4] dataTeamEntities=	1	 localPid=	0	 localTeam=	2
+20:40:28 [4] 	dota_data_radiant	 inst=	0x2556DFBA000	 cnt=	5	 ptr=	0x25588F8E000
+20:40:28 [4]   r0 rel=2 unrel=0 earned=4118 xp=344 nw=102 lh=0 dn=0 kills=0 slot?=0
+20:40:28 [4]   r1 rel=258 unrel=716 earned=13674 xp=16906 nw=14184 lh=108 dn=26 kills=0 slot?=0
+20:40:28 [4]   r2 rel=122 unrel=342 earned=9294 xp=12309 nw=9489 lh=41 dn=8 kills=0 slot?=0
+20:40:28 [4]   r3 rel=153 unrel=497 earned=12458 xp=15154 nw=12905 lh=133 dn=14 kills=0 slot?=0
+20:40:28 [4]   r4 rel=57 unrel=10 earned=15432 xp=17081 nw=15942 lh=156 dn=23 kills=0 slot?=0
+20:40:28 [ev] OnUnitAnimationEnd unit=npc_dota_creep_lane snap=false
+[20:40:29] R11: frame hud=49 menu=79 open=0 sw=1920
+20:40:29 [ev] OnEntityHurt source=npc_dota_creep_lane target=npc_dota_creep_lane damage=0 ability=nil
+20:40:29 [ev] OnProjectile handle=1086 source_idx=2566249875592 target_idx=2566249860136 moveSpeed=900 isAttack=true
+20:40:29 [perf] slow poll mode=draw cost=769.0ms scan=15.0ms fire=754.0ms top=OnUnitAnimation(753.0ms) polls=1750
+20:40:29 [entity] iter build ms=6.00 n=5856 tickBuilds=1 total=352 cached=0
+20:40:29 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=0.541 detect=0.514 type=0 sequenceName=attack
+20:40:29 [perf] slow poll mode=tick cost=705.0ms scan=5.0ms fire=700.0ms top=OnUnitAnimation(689.0ms) polls=1751
+20:40:29 [entity] byHandle build ms=0.00 n=5856 tickBuilds=2 total=344
+20:40:30 loop 351 0.8s npc_dota_hero_treant hp=736 -7195 -6582 gt=2013.4
+20:40:30 [ev] OnUnitAnimationEnd unit=npc_dota_creep_lane snap=false
+20:40:30 [ev] OnEntityHurt source=npc_dota_hero_drow_ranger target=npc_dota_creep_lane damage=0 ability=nil
+20:40:30 [ev] OnProjectile handle=1087 source_idx=2566249871336 target_idx=2566249860136 moveSpeed=1200 isAttack=true
+20:40:30 [perf] slow poll mode=draw cost=706.0ms scan=3.0ms fire=703.0ms top=OnUnitAnimation(703.0ms) polls=1752
+20:40:30 [clock] src=atk gt=2014.10 gs=236.37 state=5 in_game=1777.7 samples/10s=5 scans=5
+20:40:30 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=0.890 detect=0.863 type=0 sequenceName=attack
+[20:40:31] R11: frame hud=49 menu=79 open=0 sw=1920
+20:40:31 [perf] slow poll mode=draw cost=502.0ms scan=12.0ms fire=490.0ms top=OnUnitAnimation(489.0ms) polls=1753
+20:40:31 [perf] slow poll mode=draw cost=647.0ms scan=2.0ms fire=645.0ms top=OnUnitAnimation(643.0ms) polls=1754
+20:40:32 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=0.529 detect=0.502 type=0 sequenceName=attack
+20:40:32 [ev] OnEntityHurt source=npc_dota_hero_drow_ranger target=npc_dota_creep_lane damage=0 ability=nil
+20:40:32 [perf] slow poll mode=draw cost=665.0ms scan=13.0ms fire=652.0ms top=OnUnitAnimation(652.0ms) polls=1755
+20:40:32 [entity] iter build ms=8.00 n=5889 tickBuilds=1 total=353 cached=0
+20:40:32 [entity] byHandle build ms=1.00 n=5889 tickBuilds=2 total=345
+20:40:32 [nav] rescan ms=20.0 entities=5833 obstacles=2256 trees=2198 hard=58 dyn=0 cells=65536 valid=true
+20:40:32 [ev] OnUnitAnimationEnd unit=npc_dota_creep_lane snap=false
+20:40:32 [api] calls/5s: 	GetAbsOrigin=5322 GetAttackRange=161 GetAttackSpeed=3 GetGameTime=42 GetHealth=12 GetIndex=28 GetPlayerID=14 GetTeamData=5 GetTeamNum=40102 GetTeamPlayer=5 GetTrueDamage=1 GetUnitName=12 HasModifier=17 IsDormant=539 IsEntity=837 SecondsPerAttack=3
+20:40:33 [ev] OnProjectile handle=1093 source_idx=2566249884216 target_idx=2565515072072 moveSpeed=1250 isAttack=true
+20:40:33 [perf] slow poll mode=tick cost=601.0ms scan=2.0ms fire=599.0ms top=OnUnitAnimation(598.0ms) polls=1756
+[20:40:33] R11: frame hud=49 menu=79 open=0 sw=1920
+20:40:33 [hud] cmds=49 text=18 world=0 overlaps=0 offscreen=0
+20:40:33 [perf] tick n=352 total=1237ms nav=37 synth=601 pump=0 script=598 draw=1 overlay=0 avg=334ms SLOW
+20:40:33 loop 352 1.2s npc_dota_hero_treant hp=736 -7195 -6582 gt=2017.2
+20:40:34 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=0.851 detect=0.824 type=0 sequenceName=attack
+20:40:34 [ev] OnEntityHurt source=npc_dota_creep_lane target=npc_dota_creep_lane damage=0 ability=nil
+20:40:34 [perf] slow poll mode=draw cost=380.0ms scan=6.0ms fire=374.0ms top=OnUnitAnimation(371.0ms) polls=1757
+20:40:34 [ev] OnUnitAnimationEnd unit=npc_dota_creep_lane snap=false
+20:40:34 [perf] slow poll mode=draw cost=464.0ms scan=27.0ms fire=437.0ms top=OnUnitAnimation(437.0ms) polls=1758
+20:40:35 [perf] slow poll mode=draw cost=411.0ms scan=1.0ms fire=410.0ms top=OnUnitAnimation(410.0ms) polls=1759
+20:40:35 [4b] playerResource NOT FOUND (GetTeamData must use fallback)
+20:40:35 [entity] iter build ms=0.00 n=5889 tickBuilds=3 total=3 cached=0
+[20:40:35] R11: frame hud=49 menu=79 open=0 sw=1920
+20:40:35 [entity] iter build ms=5.00 n=5880 tickBuilds=1 total=354 cached=0
+20:40:35 events: polls=1761 avg=182.8ms scan=4.4ms fire=178.5ms max=1620.0ms slowPolls=539 errors=0 hurtsDropped=0 humanOrders=0 drawSkips=0 OnEntityDestroy=2800 OnEntityHurt=4498 OnNpcDying=434 OnProjectile=1093 OnUnitAnimation=8982 OnUnitAnimationEnd=1941 | OnEntityDestroy=129ms OnEntityHurt=278ms OnNpcDying=101ms OnProjectile=209ms OnUnitAnimation=312551ms OnUnitAnimationEnd=1015ms
+20:40:35 [ev] OnUnitAnimation summary n=8982 distinct_castpoint=11 values={0.00,0.30,0.33,0.35,0.40,0.43,0.46,0.47,0.50,0.60,0.70} sample{unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=0.356 seq=4}
+20:40:35 [ev] OnUnitAnimationEnd summary n=1941 sample{unit=npc_dota_creep_lane}
+20:40:35 [ev] OnEntityHurt summary n=4498 with_source=4235 (94%) sample{source=npc_dota_creep_lane target=npc_dota_creep_lane damage=0 ability=nil}
+20:40:35 [ev] OnProjectile summary n=1093 sample{handle=2 source=2566250052040 target=2567541364088 moveSpeed=750 isAttack=true ability=nil}
+20:40:35 [entity] byHandle build ms=1.00 n=5880 tickBuilds=2 total=346
+20:40:35 loop 353 0.2s npc_dota_hero_treant hp=736 -7195 -6582 gt=2018.9
+20:40:35 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=0.954 detect=0.927 type=0 sequenceName=attack
+20:40:35 [ev] OnEntityHurt source=npc_dota_creep_lane target=npc_dota_creep_lane damage=0 ability=nil
+20:40:35 [perf] slow poll mode=draw cost=205.0ms scan=3.0ms fire=202.0ms top=OnUnitAnimation(202.0ms) polls=1762
+20:40:35 [5] simTime samples=	4967	min=	146.33	med=	146.333	max=	2018.267	| gamerules gamestart=	236.367	| heroSim=	0.000
+20:40:35 [ev] OnUnitAnimationEnd unit=npc_dota_creep_lane snap=false
+20:40:35 [6] npc/ctrl=	167	 identityFlagsLowByte=	0:166,8:1	 nodeDormant=	0:167
+20:40:35 [6] samples: 	npc_dota_creep_lane(idx1810 flags=0x1000 dorm=0) | npc_dota_creep_lane(idx2665 flags=0x1000 dorm=0) | npc_dota_creep_lane(idx1870 flags=0x1000 dorm=0) | npc_dota_creep_lane(idx2290 flags=0x1000 dorm=0) | npc_dota_creep_lane(idx1705 flags=0x1000 dorm=0) | npc_dota_creep_lane(idx2319 flags=0x1000 dorm=0) | npc_dota_creep_lane(idx304 flags=0x1000 dorm=0) | npc_dota_creep_lane(idx2797 flags=0x1000 dorm=0) | npc_dota_creep_lane(idx1661 flags=0x1000 dorm=0) | npc_dota_creep_siege(idx1814 flags=0x1000 dorm=0) | npc_dota_creep_siege(idx2790 flags=0x1000 dorm=0) | npc_dota_creep_siege(idx2781 flags=0x1000 dorm=0)
+20:40:35 [7] hero 	identity	: 	+0=0x255D0E2E000 +8=0x7FF8776DE8B0 +10=0xFFFFFFFF018A0800 +18=0x2552A89DF43 +20=0x2552A89DF43 +28=0x0 +30=0x200001000 +38=0x0 +40=0x73646E7600000000 +48=0x0 +50=0x25522BC4918 +58=0x25580696908 +60=0x0 +68=0x0 +70=0x255CD48D200
+20:40:35 [7] hero 	instance	: 	+0=0x7FF875A967C8 +8=0x0 +10=0x25580696898 +18=0x0 +20=0x0 +28=0x0 +30=0x255D0E3A800
+20:40:35 [8] schema 	CDOTA_Buff	 size=0x	1AA8	 fields=	38	: 	m_bAuraIsHeal=0 m_bCurrentlyInAuraRange=0 m_bIsAura=0 m_bIsAuraActiveOnDeath=0 m_bMarkedForDeletion=0 m_bProvidedByAura=0 m_bPurgedDestroy=159 m_flAuraRadius=144 m_flCreationTime=84 m_flDieTime=100 m_flDuration=96 m_flLastAppliedTime=92 m_flPreviousTick=160 m_flThinkInterval=164 m_flThinkTimeAccumulator=168 m_hAbility=112 m_hAuraOwner=128 m_hAuraUnits=200 m_hCaster=104 m_hDuplicationSource=120 m_hParent=116 m_hScriptScope=6816 m_iAttributes=152 m_iAuraSearchFlags=140 m_iAuraSearchTeam=136 m_iAuraSearchType=138 m_iCreationFrame=88 m_iIndex=80 m_iPaddingToMakeSchemaHappy2=156 m_iParticles=176 m_iSerialNumber=72 m_iStackCount=132 m_iStringIndex=76 m_iTeam=148 m_iszModifierAura=56 m_nApplierAbilityID=124 m_nApplierHeroID=108 m_name=40
+20:40:35 [8] schema 	CDOTA_ModifierManager	 size=0x	390	 fields=	7	: 	m_bCompactBuffListPending=40 m_iBuffIndex=904 m_iLockRefCount=908 m_nHasTruesightForTeam=896 m_nHasTruesightForTeamValid=898 m_nProvidesFOWPositionForTeam=900 m_nProvidesFOWPositionForTeamValid=902
+20:40:35 [8] schema 	C_DOTA_PlayerResource	 size=0x	35B0	 fields=	24	: 	m_bDirtySelection=10336 m_bHasWorldTreesChanged=10337 m_bSwapWillingness=10339 m_bWasDataUpdateCreated=1536 m_bWorldTreeModelsChanged=10338 m_hPlayerCouriers=10784 m_hTeamCouriers=10424 m_iszFilteredHTMLSafeName=3424 m_iszHTMLSafeName=2912 m_iszName=2400 m_nEventNPCReplaced=12560 m_nEventPlayerInfo=12564 m_nInventoryUpdated=12568 m_nObsoleteEventIDAssociatedWithEventData=1884 m_nPrimaryEventIndex=1880 m_pPlayerIDToOnstageSlot=12344 m_playerIDToPawn=2144 m_playerIDToPlayer=1888 m_vecBrodcasterData=1752 m_vecEventsForDisplay=1856 m_vecOnstageHomeTeams=12320 m_vecOnstagePlayerSeats=12536 m_vecPlayerData=1648 m_vecPlayerTeamData=1544
+20:40:35 [8] schema 	PlayerResourcePlayerTeamData_t	 size=0x	238	 fields=	76	: 	m_CustomPlayerColor=252 m_ThreatLevelInfos=48 m_UnitShareMasks=260 m_bAFK=208 m_bBanSuggestedHeroes=228 m_bBattleBonusActive=244 m_bCanEarnRewards=235 m_bCanRepick=234 m_bHasPredictedVictory=257 m_bHasRandomed=236 m_bIsPartyGuild=452 m_bObsoleteIsEventOwned=542 m_bQualifiesForPAContractReward=256 m_eHeroStickerQuality=464 m_eLaneSelectionFlags=465 m_flLastBuybackTime=196 m_flTeamFightParticipation=296 m_flTimeOfLastSaluteSent=312 m_hSelectedHero=204 m_iAssists=172 m_iBattleBonusRate=246 m_iBattleCupDivision=292 m_iBattleCupSkillLevel=280 m_iBattleCupTeamID=284 m_iBattleCupTournamentID=288 m_iBattleCupWinDate=272 m_iBattleCupWinStreak=268 m_iBountyRunes=428 m_iCustomBuybackCost=248 m_iCustomIntParam=188 m_iDeaths=176 m_iFirstBloodClaimed=300 m_iFirstBloodGiven=304 m_iKills=168 m_iLastBuybackTime_Obsolete=200 m_iLevel=184 m_iObsoleteAvailableSalutes=556 m_iObsoleteEventEffectsMask=536 m_iObsoleteEventPointAdjustmentsRemaining=552 m_iObsoleteEventPoints=520 m_iObsoleteEventPremiumPoints=524 m_iObsoleteEventRanks=540 m_iObsoleteEventWagerTokensMax=532 m_iObsoleteEventWagerTokensRemaining=528 m_iObsoleteRankWagersAvailable=544 m_iObsoleteRankWagersMax=548 m_iObsoleteSaluteAmounts=560 m_iOutpostsCaptured=431 m_iPowerRunes=429 m_iRespawnSeconds=192 m_iStreak=180 m_iTeamSlot=264 m_iWaterRunes=430 m_nAvailableGifts=468 m_nPlayerDraftPreferredRoles=466 m_nPlayerDraftPreferredTeam=467 m_nRandomedHeroID=240 m_nSelectedHeroFacet=160 m_nSelectedHeroID=152 m_nSuggestedHeroes=212 m_unCompendiumLevel=232 m_unFowTeam=469 m_unGuildFlags=448 m_unGuildID=456 m_unGuildLevel=434 m_unGuildLogo=440 m_unGuildPattern=438 m_unGuildPrimaryColor=436 m_unGuildSecondaryColor=437 m_unGuildTier=432 m_unHeroStickerDefIndex=460 m_unPickOrder=308 m_unSelectedHeroBadgeXP=424 m_vecItemPreferenceDisliked=496 m_vecItemPreferenceLiked=472 m_vecPlayerEventData=320
+20:40:35 [8] schema 	DataTeamPlayer_t	 size=0x	12F0	 fields=	97	: 	m_iBuildingGold=100 m_iComebackGold=108 m_iCreepDenyGold=120 m_iExperimental2Gold=116 m_iExperimentalGold=112 m_iOtherGold=104 m_iRoshanGold=96 m_iTPScrollsPurchased=124
+20:40:35 [8] strides: PlayerResourcePlayerTeamData_t size=	0x238	 DataTeamPlayer_t size=	0x12F0
+20:40:35 [8] C_DOTA_BaseNPC fieldCount=	208
+20:40:35 [8] field[0] m_bIsPhantom off=0xC80 type=0x7FF8C42C32F0 t+8=bool t+0=nil t+10=nil
+20:40:35 [8] field[1] m_iUnitType off=0xC84 type=0x7FF8C42C3228 t+8=uint32 t+0=nil t+10=nil
+20:40:35 [8] field[2] m_bSelectionRingVisible off=0xC98 type=0x7FF8C42C32F0 t+8=bool t+0=nil t+10=nil
+20:40:35 [8] field[3] m_iCurrentLevel off=0xC9C type=0x7FF8C42C3200 t+8=int32 t+0=nil t+10=nil
+20:40:35 [8] field[4] m_bIsAncient off=0xCA0 type=0x7FF8C42C32F0 t+8=bool t+0=nil t+10=nil
+20:40:35 [8] field[5] m_bIsBossCreature off=0xCA1 type=0x7FF8C42C32F0 t+8=bool t+0=nil t+10=nil
+20:40:35 [8] field[6] m_bStolenScepter off=0xCA2 type=0x7FF8C42C32F0 t+8=bool t+0=nil t+10=nil
+20:40:35 [9] npc_dota_creep_lane idx=1810 hp=700/700 mana=0/0 lvl=1 ms=325 bat=1 bas=100 dmg=41/49 bonus=0 basedmg=41/49 range=100 acq=500 hull=16 hregen=0.49858283996582 mregen=0 armor=3 mres=0 bountyxp=25 gold=20/26 moving=1 act=1502 atkcap=0x1 nearShop=0 waitSpawn=1 scepter=0/0 shard=0/0 ownerNPC=nil controllable=0x0 dead=0
+20:40:35 [9] npc_dota_creep_lane idx=2665 hp=550/550 mana=0/0 lvl=3 ms=325 bat=1 bas=100 dmg=19/23 bonus=0 basedmg=19/23 range=100 acq=500 hull=16 hregen=0.49858283996582 mregen=0 armor=2 mres=0 bountyxp=57 gold=34/39 moving=1 act=1502 atkcap=0x1 nearShop=0 waitSpawn=1 scepter=0/0 shard=0/0 ownerNPC=nil controllable=0x0 dead=0
+20:40:35 [9] npc_dota_creep_lane idx=1870 hp=550/550 mana=0/0 lvl=3 ms=325 bat=1 bas=100 dmg=19/23 bonus=0 basedmg=19/23 range=100 acq=500 hull=16 hregen=0.49858283996582 mregen=0 armor=2 mres=0 bountyxp=57 gold=34/39 moving=0 act=1502 atkcap=0x1 nearShop=0 waitSpawn=1 scepter=0/0 shard=0/0 ownerNPC=nil controllable=0x0 dead=0
+20:40:35 [9] npc_dota_creep_lane idx=2290 hp=550/550 mana=0/0 lvl=3 ms=325 bat=1 bas=100 dmg=19/23 bonus=0 basedmg=19/23 range=100 acq=500 hull=16 hregen=0.49858283996582 mregen=0 armor=2 mres=0 bountyxp=57 gold=34/39 moving=1 act=1502 atkcap=0x1 nearShop=0 waitSpawn=1 scepter=0/0 shard=0/0 ownerNPC=nil controllable=0x0 dead=0
+20:40:35 [9] npc_dota_creep_lane idx=1705 hp=475/475 mana=500.00048828125/500.00048828125 lvl=5 ms=325 bat=1 bas=100 dmg=46/51 bonus=0 basedmg=46/51 range=500 acq=600 hull=8 hregen=2.0008163452148 mregen=0.75035381317139 armor=1 mres=0 bountyxp=22 gold=19/25 moving=1 act=1502 atkcap=0x2 nearShop=0 waitSpawn=1 scepter=0/0 shard=0/0 ownerNPC=nil controllable=0x0 dead=0
+20:40:35 [9] npc_dota_creep_lane idx=2319 hp=550/550 mana=0/0 lvl=3 ms=325 bat=1 bas=100 dmg=19/23 bonus=0 basedmg=19/23 range=100 acq=500 hull=16 hregen=0.49858283996582 mregen=0 armor=2 mres=0 bountyxp=57 gold=34/39 moving=1 act=1502 atkcap=0x1 nearShop=0 waitSpawn=1 scepter=0/0 shard=0/0 ownerNPC=nil controllable=0x0 dead=0
+20:40:35 [10] hero mgr=	0x255D0E2EE30
+20:40:35 [10] mgr dwords: 	+0=1978561048 +4=32760 +8=-790437888 +C=597 +10=5 +14=0 +18=-754994368 +1C=597 +20=8 +24=0 +28=0 +2C=0 +30=16 +34=0 +38=-788581248 +3C=597 +40=16
+20:40:36 [entity] iter build ms=7.00 n=5885 tickBuilds=1 total=355 cached=0
+20:40:36 [entity] byHandle build ms=0.00 n=5885 tickBuilds=2 total=347
+20:40:36 loop 354 0.2s npc_dota_hero_treant hp=736 -7195 -6582 gt=2019.6
+20:40:36 [perf] slow poll mode=draw cost=365.0ms scan=3.0ms fire=362.0ms top=OnUnitAnimation(362.0ms) polls=1768
+20:40:37 [ev] OnProjectile handle=1095 source_idx=2566250051368 target_idx=2564678240760 moveSpeed=750 isAttack=true
+20:40:37 [perf] slow poll mode=draw cost=387.0ms scan=3.0ms fire=384.0ms top=OnUnitAnimation(382.0ms) polls=1769
+20:40:37 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=0.469 detect=0.442 type=0 sequenceName=attack
+20:40:37 [entity] iter build ms=6.00 n=5941 tickBuilds=1 total=356 cached=0
+20:40:37 [ev] OnEntityHurt source=npc_dota_creep_lane target=npc_dota_creep_lane damage=0 ability=nil
+20:40:37 [entity] byHandle build ms=1.00 n=5941 tickBuilds=2 total=348
+[20:40:37] R11: frame hud=47 menu=79 open=0 sw=1920
+20:40:37 loop 355 0.4s npc_dota_hero_treant hp=736 -7195 -6582 gt=2020.9
+20:40:37 [ev] OnUnitAnimationEnd unit=npc_dota_creep_lane snap=false
+20:40:37 [perf] slow poll mode=draw cost=224.0ms scan=4.0ms fire=220.0ms top=OnUnitAnimation(217.0ms) polls=1772
+20:40:37 [10] layout cnt@10 ptr@18 c=5 resolved=3: 0:ambient_creatures | 1: | 3:
+20:40:37 [11] xhelpers=	true	 xkv=	table
+20:40:37 [api] calls/5s: 	GetAbsOrigin=131493 GetAttackRange=129 GetAttackSpeed=14 GetGameTime=107 GetHealth=51 GetIndex=62 GetPlayerID=43 GetTeamData=15 GetTeamNum=30824 GetTeamPlayer=16 GetTrueDamage=6 GetUnitName=34 HasModifier=73 IsDormant=476 IsEntity=879 SecondsPerAttack=14 StatesDuration=2
+20:40:38 [11] KV items=	0	 abilities=	0	 units=	table	 heroes=	table
+20:40:38 [11] abilKV 	treant_natures_grasp	 keys=	AbilityUnitDamageType,AbilityManaCost,AbilityCastRange,AbilityValues,AbilityUnitTargetType,AbilityCastPoint,AbilitySound,AbilityBehavior,SpellImmunityType,AbilityCooldown,AbilityCastAnimation
+20:40:38 [11] abilKV 	axe_berserkers_call	 keys=	HasShardUpgrade,SpellDispellableType,FightRecapLevel,AbilityValues,AbilityManaCost,AbilityDamage,SpellImmunityType,AbilityCastPoint,AbilitySound,AbilityCastAnimation,AbilityBehavior,AbilityCastGestureSlot,AbilityCooldown,TooltipSummaryProperties
+20:40:38 [11] abilKV 	item_blink	 ABSENT
+20:40:38 [11] abilKV 	nevermore_shadowraze1	 keys=	AbilityUnitDamageType,SpellDispellableType,FightRecapLevel,AbilityValues,LinkedAbility,HasShardUpgrade,SpellImmunityType,AbilityCastPoint,AbilitySound,AbilityManaCost,AbilityBehavior,AbilityCastGestureSlot,AbilityCooldown,AbilityCastAnimation
+20:40:38 api.register: core namespaces registered
+20:40:38 [12] api.register ok=	true	
+20:40:38 [12] Heroes.GetLocal=	0x25580696898	 Entity.GetIndex=	1263
+20:40:38 [api] visibility mask active (visible=131/161 npcs)
+20:40:38 [perf] slow poll mode=draw cost=278.0ms scan=2.0ms fire=276.0ms top=OnUnitAnimation(275.0ms) polls=1773
+20:40:38 [api] hpp index loaded: 6954 classes in 102ms
+20:40:38 [12] GetAbsOrigin=	-7195,-6582,393	 team=	2	 dormant=	false	 alive=	true	 hp=	736	 className=	npc_dota_hero_treant
+20:40:38 [api] calls/5s: 	AttackAnimPoint=1 GetAbsOrigin=1 GetAttackRange=1 GetAttackSpeed=1 GetClassName=1 GetGameTime=1 GetHealth=1 GetHullRadius=1 GetIndex=1 GetTeamNum=2 GetTrueDamage=1 GetUnitName=1 IsAlive=1 IsDormant=1 SecondsPerAttack=1
+20:40:38 [clock] src=atk gt=2021.42 gs=236.37 state=5 in_game=1785.1 samples/10s=1 scans=1
+20:40:38 [12] NPC unitName=	npc_dota_hero_treant	 attackRange=	150	 bonusRange=	0	 trueDmg/min/max=	88	/	96	 hull=	24	 spAttack=	1.7790262076133	 animPoint=	0.6	 projSpeed=	nil	 hregen=	0.25100803375244	 mregen=	0.25100803375244	 isRunning=	false	 isAttacking=	false	 scepter=	false	 shard=	false	 barriers=	nil	 statesDur=	table: 0x020b5346d3d0
+20:40:38 [12] Entity.GetField(hero,'m_bIsWaitingToSpawn')=	false
+20:40:38 [12] Hero xp=	344	 respawn=	0	 playerId=	0	 primaryAttr=	0	 recentDmg=	0	 lastVisible=	2021.4327480469
+20:40:38 [12] Players.GetAll=	10
+20:40:38 [perf] slow poll mode=draw cost=233.0ms scan=14.0ms fire=219.0ms top=OnUnitAnimation(217.0ms) polls=1774
+20:40:38 [perf] slow poll mode=draw cost=238.0ms scan=16.0ms fire=222.0ms top=OnUnitAnimation(221.0ms) polls=1775
+20:40:38 [entity] iter build ms=5.00 n=6030 tickBuilds=1 total=357 cached=0
+20:40:38 [entity] byHandle build ms=1.00 n=6030 tickBuilds=2 total=349
+20:40:38 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=2.000 detect=8.391 type=0 sequenceName=attack
+20:40:38 [ev] OnEntityHurt source=npc_dota_hero_viper target=npc_dota_hero_lich damage=0 ability=nil
+20:40:38 [ev] OnProjectile handle=1109 source_idx=2566250051368 target_idx=2566249879624 moveSpeed=750 isAttack=true
+20:40:38 [perf] slow poll mode=tick cost=404.0ms scan=2.0ms fire=402.0ms top=OnUnitAnimation(399.0ms) polls=1776
+[20:40:39] R11: frame hud=53 menu=79 open=0 sw=1920
+20:40:39 [hud] cmds=47 text=16 world=0 overlaps=0 offscreen=0
+20:40:39 loop 356 0.8s npc_dota_hero_treant hp=736 -7195 -6582 gt=2022.7
+20:40:39 [ev] OnUnitAnimationEnd unit=npc_dota_creep_lane snap=false
+20:40:40 [perf] slow poll mode=draw cost=654.0ms scan=5.0ms fire=649.0ms top=OnUnitAnimation(648.0ms) polls=1777
+20:40:40 [ev] OnUnitAnimation unit=npc_dota_creep_lane activity=1503 castpoint=0.467 lag=1.189 detect=1.161 type=0 sequenceName=attack
+20:40:40 [api] C_DOTA_PlayerResource located @	0x255CB74FE00
+20:40:40 [12]   player1 class=C_DOTAPlayerController team=2 pid=1 | teamData{kills=1430537284 deaths=1430537284 assists=1146443093 lvl=16777215 lane=0 heroId=0 respawn=0} | teamPlayer{nw=105 lh=0 dn=0 rel=1 unrel=0 earned=4137 xp=344}
+20:40:40 [12]   player2 class=C_DOTAPlayerController team=2 pid=2 | teamData{kills=1124073472 deaths=0 assists=1 lvl=15 lane=0 heroId=-11184811 respawn=0} | teamPlayer{nw=9544 lh=41 dn=8 rel=141 unrel=378 earned=9349 xp=12589}
+20:40:40 [12]   player3 class=C_DOTAPlayerController team=2 pid=3 | teamData{kills=1140850688 deaths=1146443093 assists=1430537284 lvl=-11184811 lane=0 heroId=0 respawn=0} | teamPlayer{nw=105 lh=0 dn=0 rel=1 unrel=0 earned=4137 xp=344}
+20:40:40 [12]   player4 class=C_DOTAPlayerController team=2 pid=4 | teamData{kills=0 deaths=1 assists=1258291200 lvl=17 lane=0 heroId=1430537284 respawn=0} | teamPlayer{nw=16284 lh=158 dn=23 rel=76 unrel=333 earned=15774 xp=17361}
+20:40:40 [12]   player5 class=C_DOTAPlayerController team=3 pid=5 | teamData{kills=0 deaths=1430537284 assists=1140850688 lvl=1430537284 lane=92 heroId=0 respawn=16777215} | teamPlayer{nw=0 lh=0 dn=0 rel=0 unrel=0 earned=0 xp=0}
+20:40:40 [12]   player6 class=C_DOTAPlayerController team=3 pid=6 | teamData{kills=1146443093 deaths=-11184811 assists=1430537284 lvl=12 lane=68 heroId=0 respawn=50331648} | teamPlayer{nw=0 lh=0 dn=0 rel=0 unrel=0 earned=0 xp=0}
+20:40:40 [12]   player7 class=C_DOTAPlayerController team=3 pid=7 | teamData{kills=3112 deaths=0 assists=0 lvl=10 lane=0 heroId=16777215 respawn=1140850688} | teamPlayer{nw=0 lh=0 dn=0 rel=0 unrel=0 earned=0 xp=0}
+20:40:40 [12]   player8 class=C_DOTAPlayerController team=3 pid=8 | teamData{kills=1430537284 deaths=1430537284 assists=1146443093 lvl=16777215 lane=0 heroId=0 respawn=0} | teamPlayer{nw=0 lh=0 dn=0 rel=0 unrel=0 earned=0 xp=0}
+20:40:40 [12]   player9 class=C_DOTAPlayerController team=3 pid=9 | teamData{kills=1392508928 deaths=0 assists=30720 lvl=10 lane=0 heroId=-11184811 respawn=0} | teamPlayer{nw=0 lh=0 dn=0 rel=0 unrel=0 earned=0 xp=0}
+20:40:40 [12]   player10 class=C_DOTAPlayerController team=2 pid=0 | teamData{kills=768 deaths=0 assists=0 lvl=2 lane=0 heroId=16777215 respawn=1140850688} | teamPlayer{nw=101 lh=0 dn=0 rel=1 unrel=0 earned=4137 xp=344}
+20:40:40 [12] GameRules gt=	2023.7297480469	 gs=	236.36668395996	 state=	5	 match=	0
+20:40:40 [13] localHero          sim=0.000 anim=2023.467 create=146.433 | simClock=-1.00 animClock=1787.10
+20:40:40 [13] controllerInst     sim=1945.533 anim=0.000 create=1.567 | simClock=1709.17 animClock=-1.00
+20:40:40 [13] dota_data_radiant  sim=0.000 anim=0.000 create=0.000 | simClock=-1.00 animClock=-1.00
+20:40:40 [13] dota_gamerules     sim=0.000 anim=0.000 create=0.000 | simClock=-1.00 animClock=-1.00
+20:40:40 [13] dota_gamemanager   sim=0.000 anim=0.000 create=0.000 | simClock=-1.00 animClock=-1.00
+20:40:40 [ev] OnEntityHurt source=npc_dota_tower target=npc_dota_creep_lane damage=0 ability=nil
+20:40:40 [ev] OnProjectile handle=1119 source_idx=2566249884216 target_idx=2566250053496 moveSpeed=1250 isAttack=true
+20:40:40 [perf] slow poll mode=draw cost=784.0ms scan=6.0ms fire=778.0ms top=OnUnitAnimation(774.0ms) polls=1778
+20:40:40 [clock] src=atk gt=2024.14 gs=236.37 state=5 in_game=1787.8 samples/10s=5 scans=5
+20:40:41 [ev] OnUnitAnimationEnd unit=npc_dota_creep_lane snap=false
+20:40:41 [13] ALL maxSim=2023.833 (clock 1787.47) maxAnim=2024.267 (clock 1787.90) n=6039
+20:40:41 [13] npcOnly maxSim=0.000 (clock -1.00) maxAnim=2024.267 (clock 1787.90)
+20:40:41 [13] lastAttack=2024.233 (clock 1787.87) lastDamage=2024.133 (clock 1787.77) gs=236.367 state=5
+20:40:41 [13] HUD CHECK: compare the in-game clock mm:ss with the 'clock' values above
+20:40:41 [14] 	hero	 (	npc_dota_hero_treant	) mgr dwords: 	0=1978561048 4=32760 8=-790437888 C=597 10=5 14=0 18=-754994368 1C=597 20=8 24=0 28=0
+20:40:41 [14]   layout cnt@0x10 ptr@0x18 cnt=5: 0{name=modifier_treant_natures_guise die=755.63 cre=146.43 dur=-1.00 stk=0 rem=-1268.88} 1{name=modifier_treant_leech_seed_passive die=657.13 cre=658.13 dur=-1.00 stk=0 rem=-1367.38} 2{name=modifier_treant_living_armor_passive die=761.30 cre=762.30 dur=-1.00 stk=0 rem=-1263.21} 3{name=modifier_fountain_aura_buff die=1820.73 cre=1236.30 dur=3.00 stk=0 rem=-203.78} 4{name=modifier_treant_natures_guise_tree_walking die=1819.50 cre=1820.50 dur=-1.00 stk=1 rem=-205.01}
+20:40:41 [14] 	hero	 m_nUnitState64=	0x40000000000	 states=	42	 schemaMask=	0
+20:40:41 [14] 	npc1	 (	npc_dota_creep_lane	) mgr dwords: 	0=1978561048 4=32760 8=-721157120 C=597 10=1 14=0 18=-758505024 1C=597 20=4 24=0 28=0
+20:40:41 [14]   layout cnt@0x10 ptr@0x18 cnt=1: 0{name=modifier_creep_irresolute die=2023.10 cre=2024.10 dur=-1.00 stk=0 rem=-1.43}
+20:40:41 [14] 	npc1	 m_nUnitState64=	0x0	 states=		 schemaMask=	0
+20:40:41 [14] 	npc2	 (	npc_dota_creep_lane	) mgr dwords: 	0=1978561048 4=32760 8=-1104709632 C=597 10=1 14=0 18=-765162976 1C=597 20=4 24=0 28=0
+20:40:41 [14]   layout cnt@0x10 ptr@0x18 cnt=1: 0{name=modifier_creep_irresolute die=2021.57 cre=2022.57 dur=-1.00 stk=0 rem=-2.96}
+20:40:41 [14] 	npc2	 m_nUnitState64=	0x0	 states=		 schemaMask=	0
+20:40:41 [15] m_bNPCVisibleState visible=132/163
+20:40:41 [15] VISIBLE samples: 	npc_dota_creep_lane(idx2282 team=2 hp=550) | npc_dota_creep_lane(idx2811 team=3 hp=550) | npc_dota_creep_lane(idx2671 team=2 hp=550) | npc_dota_creep_lane(idx2161 team=2 hp=700) | npc_dota_creep_lane(idx2654 team=2 hp=550) | npc_dota_creep_lane(idx2617 team=2 hp=550)
+20:40:41 [15] HIDDEN  samples: 	npc_dota_creep_siege(idx2753 team=2 hp=935) | npc_dota_creep_siege(idx2564 team=2 hp=935) | npc_dota_creep_lane(idx896 team=2 hp=757) | npc_dota_creep_lane(idx897 team=2 hp=0) | npc_dota_courier(idx1283 team=2 hp=6) | npc_dota_lantern(idx530 team=5 hp=100)
+20:40:41 [15] words: 	w0=0x0 w1=0x0 w2=0x120000000000 w3=0x40000 w4=0x1000000000006 w5=0x0 w6=0x0 w7=0x0
+20:40:41 api.register: core namespaces registered
+20:40:41 [16] localHero              unitName=npc_dota_hero_treant baseAS(0xCE4)=90 bat(0xCE8)=1.8999999761581 dmg=88/96 bonus=0 basedmg=60/68
+20:40:41 [16]   KV rate=1.9 animPoint=0.6 range=150 proj=nil turn=nil | API aps=0.562 spa=1.779 anim=0.6 proj=nil rangeBonus=0 ttf=0.000 recentDmg=0
+20:40:41 [16] creep1                 unitName=npc_dota_creep_goodguys_melee baseAS(0xCE4)=100 bat(0xCE8)=1 dmg=19/23 bonus=0 basedmg=19/23
+20:40:41 [16]   KV rate=1 animPoint=0.467 range=100 proj=nil turn=0.5 | API aps=1.000 spa=1.000 anim=0.467 proj=nil rangeBonus=0 ttf=0.000 recentDmg=0
+20:40:41 [16] creep2                 unitName=npc_dota_creep_badguys_melee baseAS(0xCE4)=100 bat(0xCE8)=1 dmg=19/23 bonus=0 basedmg=19/23
+20:40:41 [16]   KV rate=1 animPoint=0.467 range=100 proj=nil turn=0.5 | API aps=1.000 spa=1.000 anim=0.467 proj=nil rangeBonus=0 ttf=0.000 recentDmg=2059206657
+20:40:41 [16] creep3                 unitName=npc_dota_creep_goodguys_melee baseAS(0xCE4)=100 bat(0xCE8)=1 dmg=19/23 bonus=0 basedmg=19/23
+20:40:41 [16]   KV rate=1 animPoint=0.467 range=100 proj=nil turn=0.5 | API aps=1.000 spa=1.000 anim=0.467 proj=nil rangeBonus=0 ttf=0.000 recentDmg=0
+20:40:41 [16] hero statesDuration: 	
+20:40:41 [16] hero modifiers: 	?@0x255D1264800 | ?@0x255C3AEE400 | ?@0x255D23D3000 | ?@0x255B8886C00 | ?@0x255CD222800
+20:40:41 api.register: core namespaces registered
+20:40:41 [17] Players.GetAll n=10 firstCall=2.00ms x10=0.00ms (cached TTL 0.5s)
+20:40:41 [17] ctrl[1] pid=1 team=2 assigned=npc_dota_hero_viper heroOrigin=4604,4246,256 owner=nil isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [17]   teamData kills=1430537284 deaths=1430537284 assists=1146443093 lvl=16777215 laneFlags=0 heroId=0 respawn=0
+20:40:41 [17] ctrl[2] pid=2 team=2 assigned=npc_dota_hero_lion heroOrigin=4011,3795,256 owner=dota_player_controller isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [17]   teamData kills=1124073472 deaths=0 assists=1 lvl=15 laneFlags=0 heroId=-11184811 respawn=0
+20:40:41 [17] ctrl[3] pid=3 team=2 assigned=npc_dota_hero_axe heroOrigin=4444,4109,256 owner=dota_player_controller isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [17]   teamData kills=1140850688 deaths=1146443093 assists=1430537284 lvl=-11184811 laneFlags=0 heroId=0 respawn=0
+20:40:41 [17] ctrl[4] pid=4 team=2 assigned=npc_dota_hero_drow_ranger heroOrigin=4530,4098,256 owner=dota_player_controller isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [17]   teamData kills=0 deaths=1 assists=1258291200 lvl=17 laneFlags=0 heroId=1430537284 respawn=0
+20:40:41 [17] ctrl[5] pid=5 team=3 assigned=npc_dota_hero_zuus heroOrigin=4806,4880,256 owner=nil isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [perf] slow poll mode=draw cost=538.0ms scan=15.0ms fire=523.0ms top=OnUnitAnimation(520.0ms) polls=1779
+20:40:41 [17]   teamData kills=0 deaths=1430537284 assists=1140850688 lvl=1430537284 laneFlags=92 heroId=0 respawn=16777215
+20:40:41 [17] ctrl[6] pid=6 team=3 assigned=npc_dota_hero_dragon_knight heroOrigin=4688,4802,256 owner=dota_player_controller isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [17]   teamData kills=1146443093 deaths=-11184811 assists=1430537284 lvl=12 laneFlags=68 heroId=0 respawn=50331648
+20:40:41 [17] ctrl[7] pid=7 team=3 assigned=npc_dota_hero_juggernaut heroOrigin=4915,4992,256 owner=dota_player_controller isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [17]   teamData kills=3112 deaths=0 assists=0 lvl=10 laneFlags=0 heroId=16777215 respawn=1140850688
+20:40:41 [17] ctrl[8] pid=8 team=3 assigned=npc_dota_hero_lich heroOrigin=4586,4782,256 owner=nil isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [17]   teamData kills=1430537284 deaths=1430537284 assists=1146443093 lvl=16777215 laneFlags=0 heroId=0 respawn=0
+20:40:41 [17] ctrl[9] pid=9 team=3 assigned=npc_dota_hero_warlock heroOrigin=4774,4833,256 owner=nil isLocalCtrl=false samePosAsLocalHero=false
+20:40:41 [17]   teamData kills=1392508928 deaths=0 assists=30720 lvl=10 laneFlags=0 heroId=-11184811 respawn=0
+20:40:41 [17] ctrl[10] pid=0 team=2 assigned=npc_dota_hero_treant heroOrigin=-7195,-6582,393 owner=dota_player_controller isLocalCtrl=true samePosAsLocalHero=true
+20:40:41 [17]   teamData kills=768 deaths=0 assists=0 lvl=2 laneFlags=0 heroId=16777215 respawn=1140850688
+20:40:41 [17] distinctAssignedHeroes=10 duplicateAssignments=0
+20:40:41 [17] Heroes.GetAll n=	14
+20:40:41 [17] hero[1] npc_dota_hero_drow_ranger playerID=4 team=2 pos=4663,4105 alive=true dormant=false visible=true owner=dota_player_controller replicating=2566249884216 hp=2214/2214
+20:40:41 [17] hero[2] npc_dota_hero_drow_ranger playerID=4 team=2 pos=4482,4124 alive=true dormant=false visible=true owner=dota_player_controller replicating=2566249884216 hp=2214/2214
+20:40:41 [17] hero[3] npc_dota_hero_axe playerID=3 team=2 pos=1415,1491 alive=false dormant=false visible=true owner=dota_player_controller replicating=2566249879624 hp=0/1226
+20:40:41 [17] hero[4] npc_dota_hero_axe playerID=3 team=2 pos=2271,2084 alive=false dormant=false visible=true owner=dota_player_controller replicating=2566249879624 hp=0/1226
+20:40:41 [17] hero[5] npc_dota_hero_treant playerID=0 team=2 pos=-7195,-6582 alive=true dormant=false visible=true owner=dota_player_controller replicating=nil hp=736/736
+20:40:41 [17] hero[6] npc_dota_hero_viper playerID=1 team=2 pos=4604,4246 alive=true dormant=false visible=true owner=nil replicating=nil hp=1981/2259
+20:40:41 [17] hero[7] npc_dota_hero_lion playerID=2 team=2 pos=4011,3795 alive=true dormant=false visible=true owner=dota_player_controller replicating=nil hp=1286/1286
+20:40:41 [17] hero[8] npc_dota_hero_axe playerID=3 team=2 pos=4444,4109 alive=true dormant=false visible=true owner=dota_player_controller replicating=nil hp=1876/2018
+20:40:41 [17] hero[9] npc_dota_hero_drow_ranger playerID=4 team=2 pos=4530,4098 alive=true dormant=false visible=true owner=dota_player_controller replicating=nil hp=2214/2214
+20:40:41 [17] hero[10] npc_dota_hero_lich playerID=8 team=3 pos=4586,4782 alive=true dormant=false visible=true owner=nil replicating=nil hp=294/956
+20:40:41 [17] hero[11] npc_dota_hero_warlock playerID=9 team=3 pos=4774,4833 alive=false dormant=false visible=true owner=nil replicating=nil hp=0/1116
+20:40:41 [17] hero[12] npc_dota_hero_zuus playerID=5 team=3 pos=4806,4880 alive=true dormant=false visible=true owner=nil replicating=nil hp=1339/1382
+20:40:41 [17] hero[13] npc_dota_hero_juggernaut playerID=7 team=3 pos=4915,4992 alive=true dormant=false visible=true owner=dota_player_controller replicating=nil hp=574/1198
+20:40:41 [17] hero[14] npc_dota_hero_dragon_knight playerID=6 team=3 pos=4688,4802 alive=true dormant=false visible=true owner=dota_player_controller replicating=nil hp=1330/1572
+20:40:41 [17] heroOrigins distinct=14 heroesAtRadiantFountain=1 heroesSharingPositions=0
+20:40:41 [17] localPlayer roleInputs laneFlags=0 heroId=16777215 networth=102 lasthits=0 denies=0
+20:40:41 === API_P1 END === (wall=	107526.2	)

@@ -1,0 +1,108 @@
+{
+  "Ability": [
+    "GetAbilityID",
+    "GetOwner",
+    "IsAttributes",
+    "IsOwnersManaEnough"
+  ],
+  "Couriers": [
+    "Contains",
+    "GetAll",
+    "GetLocal"
+  ],
+  "Engine": [
+    "IsShopOpen",
+    "PlayVol"
+  ],
+  "Entity": [
+    "GetAbsOriginXYZ",
+    "IsAbility"
+  ],
+  "GameRules": [
+    "ChatMessage",
+    "GetDOTATime",
+    "GetGameEndTime",
+    "GetLobbyID"
+  ],
+  "GridNav": [
+    "BuildPath",
+    "CreateNpcMap",
+    "IsTraversable",
+    "ReleaseNpcMap"
+  ],
+  "Heroes": [
+    "InRadius"
+  ],
+  "Humanizer": [
+    "GetOrderQueue"
+  ],
+  "Input": [
+    "GetCursorPos",
+    "GetNearestHeroToCursor",
+    "GetWorldCursorPos",
+    "IsCursorInRect",
+    "IsInputCaptured",
+    "IsKeyDown",
+    "IsKeyDownOnce",
+    "IsPopupOpen"
+  ],
+  "Item": [
+    "GetCost",
+    "GetCurrentCharges",
+    "GetPlayerOwnerID",
+    "GetSecondaryCharges",
+    "GetStockCount",
+    "IsCombineLocked",
+    "IsItemEnabled",
+    "IsSellable",
+    "IsStackable",
+    "RequiresCharges"
+  ],
+  "Modifier": [
+    "GetCaster",
+    "GetCreationTime",
+    "GetDieTime",
+    "GetName",
+    "GetStackCount",
+    "GetState"
+  ],
+  "NPC": [
+    "GetAttackTime",
+    "GetCastRangeBonus",
+    "GetPhysicalArmorValue",
+    "IsBuilding",
+    "IsPositionInRange"
+  ],
+  "Players": [
+    "Count",
+    "Get"
+  ],
+  "Render": [
+    "Blur",
+    "CenteredNotification",
+    "Circle",
+    "FilledCircle",
+    "FilledRect",
+    "Gradient",
+    "Image",
+    "ImageCentered",
+    "ImageSize",
+    "Line",
+    "LoadFont",
+    "LoadImage",
+    "PopClip",
+    "PushClip",
+    "Rect",
+    "ScreenSize",
+    "Shadow",
+    "Text",
+    "TextSize",
+    "WorldToScreen"
+  ],
+  "UI": [
+    "Create"
+  ],
+  "World": [
+    "GetGroundZ"
+  ]
+}

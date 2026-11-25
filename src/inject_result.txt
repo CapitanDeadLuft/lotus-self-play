@@ -1,0 +1,2 @@
+injected D:\hake\lotus\src\host16.dll into pid 10616
+done 

@@ -1,0 +1,10 @@
+step: find dota2
+dota2.exe pid=14520
+step: modules snapshot
+modules total: 163
+  client.dll         base=0x7FF9FC7C0000 size=0x6E3B000
+  engine2.dll        base=0x7FFA4D7B0000 size=0x907000
+  schemasystem.dll   base=0x7FFA7E5E0000 size=0x7F000
+  tier0.dll          base=0x7FFA6E9F0000 size=0x401000
+  vstdlib.dll        NOT LOADED
+  steam_api64.dll    base=0x7FFA82B00000 size=0x50000

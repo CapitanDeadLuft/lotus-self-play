@@ -1,0 +1,81 @@
+{
+  "Bottle": [
+    "GetRuneType"
+  ],
+  "Couriers": [
+    "GetAll",
+    "GetLocal"
+  ],
+  "Entities": [
+    "GetAll"
+  ],
+  "GC": [
+    "GetSteamID",
+    "SendMessage"
+  ],
+  "GridNav": [
+    "BuildPath",
+    "CreateNpcMap",
+    "IsTraversable",
+    "ReleaseNpcMap"
+  ],
+  "HTTP": [
+    "Request"
+  ],
+  "Humanizer": [
+    "GetOrderQueue"
+  ],
+  "Input": [
+    "IsInputCaptured"
+  ],
+  "Item": [
+    "GetCost",
+    "GetCurrentCharges",
+    "GetPlayerOwnerID",
+    "GetSecondaryCharges",
+    "GetStockCount",
+    "IsCombineLocked",
+    "IsItemEnabled",
+    "IsSellable",
+    "IsStackable",
+    "RequiresCharges"
+  ],
+  "Modifier": [
+    "GetCaster",
+    "GetCreationTime",
+    "GetDieTime",
+    "GetName",
+    "GetStackCount",
+    "GetState"
+  ],
+  "NPCs": [
+    "GetAll",
+    "InRadius"
+  ],
+  "Panorama": [
+    "GetPanelByName"
+  ],
+  "PowerTreads": [
+    "GetStats"
+  ],
+  "Rune": [
+    "GetRuneType"
+  ],
+  "Runes": [
+    "Contains",
+    "GetAll"
+  ],
+  "TempTrees": [
+    "GetAll",
+    "InRadius"
+  ],
+  "Tower": [
+    "GetAttackTarget"
+  ],
+  "Tree": [
+    "IsActive"
+  ],
+  "World": [
+    "GetGroundZ"
+  ]
+}

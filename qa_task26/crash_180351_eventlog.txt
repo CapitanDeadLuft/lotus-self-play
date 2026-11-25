@@ -1,0 +1,109 @@
+
+TimeCreated      : 17.11.2026 18:03:55
+Id               : 1001
+ProviderName     : Windows Error Reporting
+LevelDisplayName : Сведения
+Message          : Контейнер ошибки 1456023514415640258, тип 5
+                   Имя события: BEX64
+                   Отклик: Нет данных
+                   Идентификатор CAB: 0
+                   
+                   Сигнатура проблемы:
+                   P1: dota2.exe
+                   P2: 0.0.0.0
+                   P3: 6ac448c4
+                   P4: nvwgf2umx.dll
+                   P5: 32.0.15.9159
+                   P6: 693a8375
+                   P7: 0000000000e4bcdd
+                   P8: c0000409
+                   P9: 0000000000000002
+                   P10: 
+                   
+                   Вложенные файлы:
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WERD5D8.tmp.dmp
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WERDC52.tmp.WERInternalMetadata.xml
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WERDCC0.tmp.xml
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WERDCBE.tmp.csv
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WERDCEE.tmp.txt
+                   
+                   Эти файлы можно найти здесь:
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\ReportArchive\AppCrash_dota2.exe_63dd91f99e328704e19e211b9b51ad45ccca6b3_37024077_46a69b3b-9fc6-4cf1-87e6-513c4161a759
+                   
+                   Символ анализа: 
+                   Повторный поиск решения: 0
+                   Идентификатор отчета: 849eea42-998a-4c6f-930b-7f7b65df729c
+                   Состояние отчета: 268435456
+                   Хэшированный контейнер: 60283ba9f9a93c4cf434d5ac095c2ec2
+                   Идентификатор GUID CAB: 0
+
+TimeCreated      : 17.11.2026 18:03:51
+Id               : 1000
+ProviderName     : Application Error
+LevelDisplayName : Ошибка
+Message          : Имя сбойного приложения: dota2.exe, версия: 0.0.0.0, метка времени: 0x6ac448c4
+                   Имя сбойного модуля: nvwgf2umx.dll, версия: 32.0.15.9159, метка времени: 0x693a8375
+                   Код исключения: 0xc0000409
+                   Смещение ошибки: 0x0000000000e4bcdd
+                   Идентификатор сбойного процесса: 0x3a1c
+                   Время запуска сбойного приложения: 0x01dd76a41ac7c7df
+                   Путь сбойного приложения: E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\dota2.exe
+                   Путь сбойного модуля: C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvwgf2umx.dll
+                   Идентификатор отчета: 849eea42-998a-4c6f-930b-7f7b65df729c
+                   Полное имя сбойного пакета: 
+                   Код приложения, связанного со сбойным пакетом: 
+
+TimeCreated      : 17.11.2026 17:42:40
+Id               : 1001
+ProviderName     : Windows Error Reporting
+LevelDisplayName : Сведения
+Message          : Контейнер ошибки 1456023514415640258, тип 5
+                   Имя события: BEX64
+                   Отклик: Нет данных
+                   Идентификатор CAB: 0
+                   
+                   Сигнатура проблемы:
+                   P1: dota2.exe
+                   P2: 0.0.0.0
+                   P3: 6ac448c4
+                   P4: nvwgf2umx.dll
+                   P5: 32.0.15.9159
+                   P6: 693a8375
+                   P7: 0000000000e4bcdd
+                   P8: c0000409
+                   P9: 0000000000000002
+                   P10: 
+                   
+                   Вложенные файлы:
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER63E1.tmp.dmp
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER6A1C.tmp.WERInternalMetadata.xml
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER6A8A.tmp.xml
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER6A88.tmp.csv
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\Temp\WER6AC8.tmp.txt
+                   
+                   Эти файлы можно найти здесь:
+                   \\?\C:\ProgramData\Microsoft\Windows\WER\ReportArchive\AppCrash_dota2.exe_63dd91f99e328704e19e211b9b51ad45ccca6b3_37024077_40c68769-7256-44b9-9ff2-09d875bc69f3
+                   
+                   Символ анализа: 
+                   Повторный поиск решения: 0
+                   Идентификатор отчета: cfbc901e-ee48-415b-b92b-a4789ef7778d
+                   Состояние отчета: 268435456
+                   Хэшированный контейнер: 60283ba9f9a93c4cf434d5ac095c2ec2
+                   Идентификатор GUID CAB: 0
+
+TimeCreated      : 17.11.2026 17:42:37
+Id               : 1000
+ProviderName     : Application Error
+LevelDisplayName : Ошибка
+Message          : Имя сбойного приложения: dota2.exe, версия: 0.0.0.0, метка времени: 0x6ac448c4
+                   Имя сбойного модуля: nvwgf2umx.dll, версия: 32.0.15.9159, метка времени: 0x693a8375
+                   Код исключения: 0xc0000409
+                   Смещение ошибки: 0x0000000000e4bcdd
+                   Идентификатор сбойного процесса: 0x43b0
+                   Время запуска сбойного приложения: 0x01dd76a16c8ab3a2
+                   Путь сбойного приложения: E:\SteamLibrary\steamapps\common\dota 2 beta\game\bin\win64\dota2.exe
+                   Путь сбойного модуля: C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvwgf2umx.dll
+                   Идентификатор отчета: cfbc901e-ee48-415b-b92b-a4789ef7778d
+                   Полное имя сбойного пакета: 
+                   Код приложения, связанного со сбойным пакетом: 
+

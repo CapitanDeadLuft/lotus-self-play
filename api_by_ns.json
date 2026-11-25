@@ -1,0 +1,303 @@
+{
+ "Abilities": [
+  "AttemptToUpgrade"
+ ],
+ "Ability": [
+  "CanBeExecuted",
+  "CanBeUpgraded",
+  "CastNoTarget",
+  "CastPosition",
+  "GetAutoCastState",
+  "GetBehavior",
+  "GetCastPoint",
+  "GetCastRange",
+  "GetChannelStartTime",
+  "GetCooldown",
+  "GetCurrentCharges",
+  "GetDamage",
+  "GetDamageType",
+  "GetLevel",
+  "GetLevelSpecialValueFor",
+  "GetManaCost",
+  "GetName",
+  "GetTargetFlags",
+  "GetTargetTeam",
+  "GetTargetType",
+  "GetToggleState",
+  "IsActivated",
+  "IsCastable",
+  "IsChannelling",
+  "IsHidden",
+  "IsInAbilityPhase",
+  "IsPassive",
+  "IsReady",
+  "IsUltimate",
+  "SecondsSinceLastUse",
+  "Toggle",
+  "ToggleMod"
+ ],
+ "Bottle": [
+  "GetRuneType"
+ ],
+ "Config": [
+  "ReadFloat",
+  "ReadInt",
+  "ReadString",
+  "WriteFloat",
+  "WriteInt",
+  "WriteString"
+ ],
+ "Couriers": [
+  "GetAll",
+  "GetLocal"
+ ],
+ "Engine": [
+  "AcceptMatch",
+  "CanAcceptMatch",
+  "ExecuteCommand",
+  "GetCheatDirectory",
+  "GetHeroNameByID",
+  "IsInGame",
+  "IsInLobby",
+  "RunScript",
+  "SetQuickBuy"
+ ],
+ "Entities": [
+  "GetAll"
+ ],
+ "Entity": [
+  "Get",
+  "GetAbsOrigin",
+  "GetClassName",
+  "GetField",
+  "GetHealth",
+  "GetIndex",
+  "GetMaxHealth",
+  "GetOwner",
+  "GetRotation",
+  "GetTeamNum",
+  "GetTempTreesInRadius",
+  "GetTreesInRadius",
+  "IsAlive",
+  "IsDormant",
+  "IsEntity",
+  "IsNPC",
+  "IsSameTeam"
+ ],
+ "FogOfWar": [
+  "IsPointVisible"
+ ],
+ "GC": [
+  "GetSteamID",
+  "SendMessage"
+ ],
+ "GameRules": [
+  "GetGameMode",
+  "GetGameStartTime",
+  "GetGameState",
+  "GetGameTime",
+  "GetMatchID",
+  "IsPaused"
+ ],
+ "GridNav": [
+  "BuildPath",
+  "CreateNpcMap",
+  "IsTraversable",
+  "ReleaseNpcMap"
+ ],
+ "HTTP": [
+  "Request"
+ ],
+ "Hero": [
+  "GetAbilityPoints",
+  "GetLastMaphackPos",
+  "GetLastVisibleTime",
+  "GetPlayerID",
+  "GetPrimaryAttribute",
+  "GetRecentDamage",
+  "GetReplicatingOtherHeroModel",
+  "GetRespawnTime",
+  "GetStrength",
+  "TalentIsLearned"
+ ],
+ "Heroes": [
+  "GetAll",
+  "GetLocal"
+ ],
+ "Humanizer": [
+  "GetOrderQueue"
+ ],
+ "Input": [
+  "IsInputCaptured"
+ ],
+ "Item": [
+  "GetCost",
+  "GetCurrentCharges",
+  "GetPlayerOwnerID",
+  "GetSecondaryCharges",
+  "GetStockCount",
+  "IsCombineLocked",
+  "IsItemEnabled",
+  "IsSellable",
+  "IsStackable",
+  "RequiresCharges"
+ ],
+ "Log": [
+  "Write"
+ ],
+ "Menu": [
+  "Create",
+  "Find"
+ ],
+ "Modifier": [
+  "GetCaster",
+  "GetCreationTime",
+  "GetDieTime",
+  "GetName",
+  "GetStackCount",
+  "GetState"
+ ],
+ "NPC": [
+  "FindFacingNPC",
+  "GetAbility",
+  "GetAbilityByIndex",
+  "GetArmorDamageMultiplier",
+  "GetAttackAnimPoint",
+  "GetAttackProjectileSpeed",
+  "GetAttackRange",
+  "GetAttackRangeBonus",
+  "GetAttackSpeed",
+  "GetBarriers",
+  "GetBountyXP",
+  "GetCurrentLevel",
+  "GetGoldBountyMax",
+  "GetGoldBountyMin",
+  "GetHealthRegen",
+  "GetHullRadius",
+  "GetItem",
+  "GetItemByIndex",
+  "GetMagicalArmorDamageMultiplier",
+  "GetMana",
+  "GetManaRegen",
+  "GetMaxMana",
+  "GetModifier",
+  "GetModifierProperty",
+  "GetModifiers",
+  "GetMoveSpeed",
+  "GetOwnerNPC",
+  "GetSecondsPerAttack",
+  "GetStatesDuration",
+  "GetTimeToFace",
+  "GetTimeToFacePosition",
+  "GetTrueDamage",
+  "GetTrueMaximumDamage",
+  "GetUnitName",
+  "HasModifier",
+  "HasScepter",
+  "HasShard",
+  "HasState",
+  "IsAncient",
+  "IsAttacking",
+  "IsBarracks",
+  "IsChannellingAbility",
+  "IsControllableByPlayer",
+  "IsCourier",
+  "IsCreep",
+  "IsEntityInRange",
+  "IsFort",
+  "IsHero",
+  "IsIllusion",
+  "IsInRangeOfShop",
+  "IsLaneCreep",
+  "IsLinkensProtected",
+  "IsMeepoClone",
+  "IsMirrorProtected",
+  "IsNeutral",
+  "IsRanged",
+  "IsRoshan",
+  "IsRunning",
+  "IsSilenced",
+  "IsStructure",
+  "IsStunned",
+  "IsTormentor",
+  "IsTower",
+  "IsVisible",
+  "IsVisibleToEnemies",
+  "IsWaitingToSpawn",
+  "IsWard",
+  "MoveTo"
+ ],
+ "NPCs": [
+  "GetAll",
+  "InRadius"
+ ],
+ "NetChannel": [
+  "GetAvgLatency",
+  "SendNetMessage"
+ ],
+ "Panorama": [
+  "GetPanelByName"
+ ],
+ "PhysicalItem": [
+  "GetItem"
+ ],
+ "PhysicalItems": [
+  "GetAll"
+ ],
+ "Player": [
+  "AttackTarget",
+  "GetAssignedHero",
+  "GetPlayerID",
+  "GetPlayerNeutralInfo",
+  "GetQueryUnit",
+  "GetSelectedUnits",
+  "GetTeamData",
+  "GetTeamPlayer",
+  "GetTotalGold",
+  "HoldPosition",
+  "PrepareUnitOrders"
+ ],
+ "Players": [
+  "GetAll",
+  "GetLocal"
+ ],
+ "PowerTreads": [
+  "GetStats"
+ ],
+ "Render": [
+  "Circle",
+  "FilledCircle",
+  "FilledRect",
+  "Line",
+  "LoadFont",
+  "ScreenSize",
+  "Text",
+  "TextSize",
+  "WorldToScreen"
+ ],
+ "Rune": [
+  "GetRuneType"
+ ],
+ "Runes": [
+  "Contains",
+  "GetAll"
+ ],
+ "TempTrees": [
+  "GetAll"
+ ],
+ "Tower": [
+  "GetAttackTarget"
+ ],
+ "Tree": [
+  "IsActive"
+ ],
+ "Trees": [
+  "InRadius"
+ ],
+ "World": [
+  "GetGroundZ"
+ ],
+ "XHelpers": [
+  "GetScript"
+ ]
+}

@@ -1,0 +1,3 @@
+calling snapshot
+snap handle: cdata<void *>: 0x000000dc
+done

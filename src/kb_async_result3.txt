@@ -1,0 +1,2 @@
+isAdmin=True
+elevated_keybd_event highHits=12/12 samples=-32767,-32768

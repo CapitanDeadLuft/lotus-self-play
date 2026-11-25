@@ -1,0 +1,48 @@
+# cmds=47 text=16 world=0 overlaps=0 offscreen=0
+rect(round) x=1650.0 y=324.0 w=250.0 h=70.0 color=AA0E1116
+line x1=1656.0 y1=324.0 x2=1894.0 y2=324.0 th=1.0
+line x1=1656.0 y1=394.0 x2=1894.0 y2=394.0 th=1.0
+line x1=1650.0 y1=330.0 x2=1650.0 y2=388.0 th=1.0
+line x1=1900.0 y1=330.0 x2=1900.0 y2=388.0 th=1.0
+line x1=1650.0 y1=330.0 x2=1650.2 y2=328.4 th=1.0
+line x1=1650.2 y1=328.4 x2=1650.8 y2=327.0 th=1.0
+line x1=1650.8 y1=327.0 x2=1651.8 y2=325.8 th=1.0
+line x1=1651.8 y1=325.8 x2=1653.0 y2=324.8 th=1.0
+line x1=1653.0 y1=324.8 x2=1654.4 y2=324.2 th=1.0
+line x1=1654.4 y1=324.2 x2=1656.0 y2=324.0 th=1.0
+line x1=1894.0 y1=324.0 x2=1895.6 y2=324.2 th=1.0
+line x1=1895.6 y1=324.2 x2=1897.0 y2=324.8 th=1.0
+line x1=1897.0 y1=324.8 x2=1898.2 y2=325.8 th=1.0
+line x1=1898.2 y1=325.8 x2=1899.2 y2=327.0 th=1.0
+line x1=1899.2 y1=327.0 x2=1899.8 y2=328.4 th=1.0
+line x1=1899.8 y1=328.4 x2=1900.0 y2=330.0 th=1.0
+line x1=1900.0 y1=388.0 x2=1899.8 y2=389.6 th=1.0
+line x1=1899.8 y1=389.6 x2=1899.2 y2=391.0 th=1.0
+line x1=1899.2 y1=391.0 x2=1898.2 y2=392.2 th=1.0
+line x1=1898.2 y1=392.2 x2=1897.0 y2=393.2 th=1.0
+line x1=1897.0 y1=393.2 x2=1895.6 y2=393.8 th=1.0
+line x1=1895.6 y1=393.8 x2=1894.0 y2=394.0 th=1.0
+line x1=1656.0 y1=394.0 x2=1654.4 y2=393.8 th=1.0
+line x1=1654.4 y1=393.8 x2=1653.0 y2=393.2 th=1.0
+line x1=1653.0 y1=393.2 x2=1651.8 y2=392.2 th=1.0
+line x1=1651.8 y1=392.2 x2=1650.8 y2=391.0 th=1.0
+line x1=1650.8 y1=391.0 x2=1650.2 y2=389.6 th=1.0
+line x1=1650.2 y1=389.6 x2=1650.0 y2=388.0 th=1.0
+text x=1836.3 y=339.0 size=12 color=AA000000 "Support 4"
+text x=1835.3 y=338.0 size=12 color=E6969EAA "Support 4"
+text(bold) x=1663.0 y=337.0 size=15 color=AA000000 "Treant Protector"
+text(bold) x=1662.0 y=336.0 size=15 color=FFEBEEF2 "Treant Protector"
+text x=1663.0 y=362.0 size=12 color=AA000000 "Now"
+text x=1662.0 y=361.0 size=12 color=E6969EAA "Now"
+text x=1737.0 y=361.0 size=13 color=AA000000 "Staying with a teammate"
+text x=1736.0 y=360.0 size=13 color=FFEBEEF2 "Staying with a teammate"
+text x=841.0 y=105.0 size=13 color=AA000000 "Chance to win"
+text x=840.0 y=104.0 size=13 color=E6969EAA "Chance to win"
+text x=1064.3 y=106.0 size=12 color=AA000000 "+10"
+text x=1063.3 y=105.0 size=12 color=FF6EC88C "+10"
+text(bold) x=1033.8 y=104.0 size=14 color=AA000000 "98%"
+text(bold) x=1032.8 y=103.0 size=14 color=FF6EC88C "98%"
+rect(round) x=840.0 y=124.0 w=240.0 h=3.0 color=1CFFFFFF
+rect(round) x=840.0 y=124.0 w=234.7 h=3.0 color=FF6EC88C
+text x=909.1 y=133.0 size=12 color=AA000000 "We have more gold"
+text x=908.1 y=132.0 size=12 color=FF6EC88C "We have more gold"

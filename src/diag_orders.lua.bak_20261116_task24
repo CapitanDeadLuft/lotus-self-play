@@ -1,0 +1,524 @@
+-- diag_orders.lua — live in-process diagnostic for the order pipeline + GridNav.
+--
+-- Runs via the host watchdog (QA: in-process restart with call_elevated.bat;
+-- never touch run.txt/stop.txt from a specialist). It issues REAL orders, so
+-- run it in the single-player bot game with the bot loop STOPPED (exactly one
+-- script at a time). Everything is logged to D:\hake\lotus\host.log with the
+-- tag [DIAG-ORD] so QA can grep it.
+--
+-- Phases
+--   0 env        hero/team/gold/inventory + orders.init + xhelpers item ids
+--   1 nav        rescan timing/obstacle counts, GridNav parity sanity,
+--                fountain->mid path (length/waypoints/ms), tree-walking branch
+--   2 mapping    Enum.UnitOrder values used by the new scripts vs orders.ORDER
+--   3 purchase   buy a cheap item by definition id (shop.lua:844 semantics:
+--                target=id, ability=id), then verify gold changed + item is in
+--                the inventory => proves the type=16 pipeline end to end
+--   4 move       issue move orders along a planned path, sample hero position
+--                every 120ms => displacement per second, stalls, tree-cell hits
+--   5 obstacle   goal inside a tree: path endpoint must snap walkable, order
+--                must not leave the hero standing still > 2.5s
+--   6 attack     attack-target order record (engine CUnitOrders echo check)
+--   7 cast A/B   ONLY if D:\hake\lotus\diag_cast.txt exists: no-target cast with
+--                ability entity index vs ability slot index (encoding proof)
+--   8 summary    PASS/FAIL lines
+--
+-- Exit: returns after ~25-40s. Keep calls cheap; no loops without Sleep.
+
+package.path = "D:\\hake\\lotus\\src\\?.lua;" .. package.path
+local ffi = require("ffi")
+ffi.cdef[[ void Sleep(unsigned long ms); ]]
+local function sleep(ms) ffi.C.Sleep(ms) end
+
+local logf = io.open("D:\\hake\\lotus\\host.log", "a")
+local function log(...)
+  local t = {}
+  for i = 1, select("#", ...) do t[i] = tostring(select(i, ...)) end
+  logf:write(os.date("%H:%M:%S ") .. "[DIAG-ORD]\t" .. table.concat(t, " ") .. "\n")
+  logf:flush()
+end
+
+local results = {}
+local function check(name, cond, extra)
+  local ok = cond and true or false
+  results[#results + 1] = { name = name, ok = ok, extra = extra }
+  log(string.format("%s %s%s", ok and "PASS" or "FAIL", name, extra and (" | " .. extra) or ""))
+  return ok
+end
+
+local function req(n) local ok, m = pcall(require, n); return ok and m or nil end
+local api = req("api")
+local entity = req("entity")
+local schema = req("schema")
+local orders = req("orders")
+local nav = req("nav")
+local xh = req("xhelpers")
+if api and api.register then pcall(api.register) end
+if not entity or not orders then log("FATAL no entity/orders module"); return end
+
+local function gf32(p, o) return tonumber(ffi.cast("float*", p + o)[0]) end
+local function gi32(p, o) return tonumber(ffi.cast("int32_t*", p + o)[0]) end
+local function rq(p, o) return tonumber(ffi.cast("uintptr_t*", p + o)[0]) end
+local G = _G
+
+local function heroPos()
+  local inst = orders.localHero()
+  if not inst then return nil end
+  local x, y, z = orders.heroPosition(inst)
+  if not x then return nil end
+  return x, y, z, inst
+end
+local function gold()
+  local ok, v = pcall(function() return G.Player.GetTotalGold(G.Players.GetLocal()) end)
+  if ok and type(v) == "number" then return v end
+  return -1
+end
+local function dist2(ax, ay, bx, by)
+  local dx, dy = bx - ax, by - ay
+  return math.sqrt(dx * dx + dy * dy)
+end
+local function heroAlive()
+  local hero = G.Heroes and G.Heroes.GetLocal()
+  if not hero then return false end
+  local ok, v = pcall(G.Entity.IsAlive, hero)
+  return (not ok) or v ~= false
+end
+local function waitAlive(maxSec)
+  local t = 0
+  while t < (maxSec or 30) do
+    if heroAlive() and heroPos() then return true end
+    sleep(500); t = t + 0.5
+  end
+  return false
+end
+local function inShopRange()
+  local hero = G.Heroes and G.Heroes.GetLocal()
+  if not hero then return false end
+  local ok, v = pcall(G.NPC.IsInRangeOfShop, hero)
+  if ok and v ~= nil then return v == true, "api" end
+  return nil, "unknown"
+end
+local function fmtPos(x, y) return string.format("%.0f,%.0f", x or 0, y or 0) end
+
+-- 0. environment -----------------------------------------------------------
+log("=== START === hero=" .. tostring((function()
+  local ok, h = pcall(entity.getLocalHero)
+  return ok and h and h.name or "none"
+end)()))
+local heroInst
+local waitHero = 0
+while waitHero < 200 do
+  local x, y, z, inst = heroPos()
+  if x then heroInst = inst; break end
+  sleep(500); waitHero = waitHero + 1
+end
+if not heroInst then
+  log("no local hero after 100s (not in a match?) — abort")
+  return
+end
+local hx, hy, hz = heroPos()
+local hname = orders.unitName(heroInst)
+log(string.format("hero=%s pos=%s z=%.0f gold=%s", hname, fmtPos(hx, hy), hz or -1, tostring(gold())))
+local okInit, initErr = orders.init()
+log("orders.init=" .. tostring(okInit) .. " err=" .. tostring(initErr))
+local ctrl = orders.localController()
+log("controller=" .. tostring(ctrl ~= nil) .. " puoRVA=0x" .. string.format("%X", orders.prepareUnitOrdersRVA))
+
+local inv0 = orders.inventory()
+local invNames = {}
+for _, it in ipairs(inv0) do invNames[#invNames + 1] = it.name end
+log("inventory(" .. #inv0 .. "): " .. table.concat(invNames, ","))
+
+-- 1. nav -------------------------------------------------------------------
+if nav then
+  local t0 = os.clock()
+  local nObs = nav.rescan()
+  local scanMs = (os.clock() - t0) * 1000
+  local st = nav.stats()
+  log(string.format("[nav] rescan %.1fms obstacles=%d trees=%d synth=%d hard=%d cells=%d",
+    scanMs, nObs, st.trees or 0, st.synthTrees or 0, st.hard or 0, st.cells or 0))
+  check("nav obstacles found", nObs > 20, "obstacles=" .. tostring(nObs))
+  local okFount, fountTr = pcall(nav.isTraversable, hx, hy)
+  log(string.format("hero cell traversable=%s cellFlags=%s", tostring(okFount and fountTr),
+    tostring(nav.cellFlags and nav.cellFlags(hx, hy) or "?")))
+  -- path to mid lane (map centre offset) and to a lane waypoint
+  local goals = { { x = hx + 2200, y = hy + 2200 }, { x = 0, y = 0 }, { x = 4200, y = 4200 } }
+  for i, g in ipairs(goals) do
+    local tp = os.clock()
+    local path = nav.buildPath(hx, hy, g.x, g.y, false)
+    local ms = (os.clock() - tp) * 1000
+    local len, px, py = 0, hx, hy
+    for _, w in ipairs(path) do len = len + dist2(px, py, w.x, w.y); px, py = w.x, w.y end
+    log(string.format("[nav] path %d -> %s waypoints=%d len=%.0f straight=%.0f %.2fms treeWalking=false",
+      i, fmtPos(g.x, g.y), #path, len, dist2(hx, hy, g.x, g.y), ms))
+    check("nav path " .. i .. " exists", #path > 0, "waypoints=" .. #path)
+    -- every waypoint must be traversable (no waypoint inside a tree/building)
+    local badWp = 0
+    for _, w in ipairs(path) do if not nav.isTraversable(w.x, w.y) then badWp = badWp + 1 end end
+    check("nav path " .. i .. " waypoints walkable", badWp == 0, "bad=" .. badWp)
+  end
+  -- tree-walking branch (Treant): ignoreTrees=true ignores trees, never buildings
+  local tp = os.clock()
+  local pathT = nav.buildPath(hx, hy, 0, 0, true)
+  local msT = (os.clock() - tp) * 1000
+  local lenT, px, py = 0, hx, hy
+  for _, w in ipairs(pathT) do lenT = lenT + dist2(px, py, w.x, w.y); px, py = w.x, w.y end
+  log(string.format("[nav] path ->0,0 waypoints=%d len=%.0f %.2fms treeWalking=true", #pathT, lenT, msT))
+  local treewalking = false
+  local okState, st2 = pcall(function()
+    local hero = G.Heroes and G.Heroes.GetLocal() or nil
+    if not hero then return false end
+    local ok3, v = pcall(G.NPC.HasState, hero, G.Enum.ModifierState.MODIFIER_STATE_ALLOW_PATHING_THROUGH_TREES)
+    return ok3 and v == true
+  end)
+  treewalking = okState and st2 == true
+  log("treant/ALLOW_PATHING_THROUGH_TREES=" .. tostring(treewalking))
+  check("nav tree-walking path exists", #pathT > 0, "waypoints=" .. #pathT)
+  local bench = nav.benchmark and nav.benchmark(100)
+  if bench then
+    log(string.format("[nav] bench iso=%.2fus typicalPath=%.2fms astar=%.2fms", bench.isoUs, bench.pathMs, bench.astarMs))
+    check("nav isTraversable < 5us", bench.isoUs < 5, string.format("%.2fus", bench.isoUs))
+    check("nav typical path < 5ms", bench.pathMs < 5, string.format("%.2fms", bench.pathMs))
+  end
+else
+  log("nav module missing")
+end
+
+-- 2. order type mapping audit ---------------------------------------------
+do
+  local U = G.Enum and G.Enum.UnitOrder or orders.ORDER
+  local used = {
+    "MOVE_TO_POSITION", "MOVE_TO_TARGET", "ATTACK_MOVE", "ATTACK_TARGET", "CAST_POSITION",
+    "CAST_TARGET", "CAST_TARGET_TREE", "CAST_NO_TARGET", "CAST_TOGGLE", "HOLD_POSITION",
+    "TRAIN_ABILITY", "DROP_ITEM", "GIVE_ITEM", "PICKUP_ITEM", "PICKUP_RUNE", "PURCHASE_ITEM",
+    "SELL_ITEM", "DISASSEMBLE_ITEM", "MOVE_ITEM", "CAST_TOGGLE_AUTO", "STOP", "TAUNT",
+    "BUYBACK", "GLYPH", "VECTOR_TARGET_POSITION", "SET_ITEM_COMBINE_LOCK", "CONTINUE",
+  }
+  local missing = {}
+  for _, k in ipairs(used) do
+    local v = U["DOTA_UNIT_ORDER_" .. k]
+    if type(v) ~= "number" then missing[#missing + 1] = k end
+  end
+  log("order enum: used=" .. #used .. " missing=" .. #missing
+    .. (#missing > 0 and (" [" .. table.concat(missing, ",") .. "]") or ""))
+  check("order enum complete", #missing == 0, table.concat(missing, ","))
+  log(string.format("mapping purchase=%d sell=%d move_item=%d train=%d cast_target=%d cast_pos=%d",
+    U.DOTA_UNIT_ORDER_PURCHASE_ITEM or -1, U.DOTA_UNIT_ORDER_SELL_ITEM or -1,
+    U.DOTA_UNIT_ORDER_MOVE_ITEM or -1, U.DOTA_UNIT_ORDER_TRAIN_ABILITY or -1,
+    U.DOTA_UNIT_ORDER_CAST_TARGET or -1, U.DOTA_UNIT_ORDER_CAST_POSITION or -1))
+end
+
+-- 3. purchase pipeline (P0-C) ---------------------------------------------
+-- Reference call site self_play/shop.lua:844:
+--   Player.PrepareUnitOrders(player, PURCHASE_ITEM, itemId, Vector(0,0,0), itemId,
+--     ISSUER_PASSED_UNIT_ONLY, buyer, false,false,false,true,"self_play_purchase",false)
+-- i.e. item DEFINITION id is passed as BOTH targetIndex and abilityIndex.
+local function itemIds()
+  local map = {}
+  if xh and xh.xkv then
+    local ok, kv = pcall(function() return xh.xkv:GetKV("items").DOTAAbilities end)
+    if ok and kv then
+      for k, v in pairs(kv) do
+        if type(v) == "table" and v.ID and k:sub(1, 5) == "item_" then
+          map[k:sub(6)] = tonumber(v.ID)
+        end
+      end
+    end
+  end
+  return map
+end
+local ids = itemIds()
+log("item ids loaded=" .. (function() local n = 0; for _ in pairs(ids) do n = n + 1 end; return n end)())
+
+do
+  local buyName = nil
+  for _, cand in ipairs({ "magic_stick", "tango", "ward_observer", "branches", "clarity" }) do
+    if ids[cand] and not orders.inventoryHas(cand) then buyName = cand; break end
+  end
+  local shop, shopSrc = inShopRange()
+  if not buyName then
+    log("purchase probe: every candidate item already owned — skip")
+  elseif gold() >= 0 and gold() < 200 then
+    log("purchase probe: gold too low (" .. tostring(gold()) .. ") — skip")
+  elseif shop == false then
+    -- not in a shop radius: a failed purchase here is expected, not a bug
+    log("purchase probe: hero not in shop range (api=" .. tostring(shop) .. ") — skip (buy proof is in the bot_loop window)")
+  else
+    local id = ids[buyName]
+    local g0 = gold()
+    local invBefore = #orders.inventory()
+    local okCall, spec = orders.buyItem(id, { identifier = "diag_purchase" })
+    log(string.format("purchase probe item=%s id=%d goldBefore=%s callOk=%s",
+      buyName, id, tostring(g0), tostring(okCall)))
+    sleep(500)
+    local g1 = gold()
+    local owned = orders.inventoryHas(buyName)
+    local p = orders.purchases[id]
+    log(string.format("purchase result item=%s owned=%s gold %s -> %s delta=%s attempts=%s engine=%s",
+      buyName, tostring(owned), tostring(g0), tostring(g1), tostring(g1 - g0),
+      tostring(p and p.count or 0),
+      spec and spec.engine and string.format("type=%s tgt=%s abil=%s", tostring(spec.engine.type),
+        tostring(spec.engine.target), tostring(spec.engine.ability)) or "none"))
+    check("purchase: order accepted by engine", okCall == true)
+    if shop == true or owned then
+      check("purchase: item in inventory", owned, "owned=" .. tostring(owned) .. " shopInRange=" .. tostring(shop))
+    else
+      log("purchase probe: inventory proof inconclusive (shop range unknown) — SKIP not FAIL")
+    end
+    if spec and spec.engine then
+      check("purchase: engine recorded type=16", spec.engine.type == 16,
+        "type=" .. tostring(spec.engine.type))
+      check("purchase: engine recorded non-zero target", (spec.engine.target or 0) ~= 0,
+        "target=" .. tostring(spec.engine.target))
+      check("purchase: engine recorded non-zero ability", (spec.engine.ability or 0) ~= 0,
+        "ability=" .. tostring(spec.engine.ability))
+    end
+  end
+end
+
+-- helper: issue a move order like the script does (NPC.MoveTo semantics)
+local function moveOrder(x, y, identifier)
+  local z = nav and nav.groundZ and nav.groundZ(x, y) or 128
+  if G.NPC and G.NPC.MoveTo then
+    local ok = pcall(G.NPC.MoveTo, G.Heroes.GetLocal(), G.Vector(x, y, z), false, false, false, true, identifier, false)
+    return ok ~= false
+  end
+  return orders.moveTo(x, y, z, { identifier = identifier })
+end
+
+-- 4. movement continuity ---------------------------------------------------
+local function pickGoal(minD, maxD)
+  local best
+  for i = 0, 15 do
+    local a = i * math.pi / 8
+    for _, r in ipairs({ 1600, 1200, 2200 }) do
+      local x, y = hx + math.cos(a) * r, hy + math.sin(a) * r
+      if nav and nav.isTraversable(x, y) then
+        local p = nav.buildPath(hx, hy, x, y, false)
+        if #p > 0 then
+          local len = 0
+          local px, py = hx, hy
+          for _, w in ipairs(p) do len = len + dist2(px, py, w.x, w.y); px, py = w.x, w.y end
+          if not best or math.abs(len - 1600) < math.abs(best.len - 1600) then
+            best = { x = x, y = y, len = len, path = p }
+          end
+        end
+      end
+    end
+  end
+  return best
+end
+
+if nav then
+  local goal = pickGoal()
+  if not goal then
+    log("movement probe: no reachable goal — skip")
+  else
+    log(string.format("movement probe goal=%s pathLen=%.0f waypoints=%d",
+      fmtPos(goal.x, goal.y), goal.len, #goal.path))
+    local x0, y0 = heroPos()
+    local samples, stalls, maxStill, treeHits = {}, 0, 0, 0
+    local prevX, prevY = x0, y0
+    local stillSince = nil
+    for step = 1, 60 do
+      -- follow the planned path like helpers.farOrder: aim at the furthest
+      -- waypoint within 1100 units, refresh target every ~0.2s
+      local target = goal
+      local px, py = prevX, prevY
+      local acc = 0
+      for _, w in ipairs(goal.path) do
+        acc = acc + dist2(px, py, w.x, w.y)
+        px, py = w.x, w.y
+        if acc > 400 then target = w; break end
+      end
+      moveOrder(target.x, target.y, "diag_move")
+      sleep(120)
+      local x, y = heroPos()
+      if x then
+        local moved = dist2(prevX, prevY, x, y)
+        samples[#samples + 1] = moved
+        if nav.isTraversable and not nav.isTraversable(x, y) then treeHits = treeHits + 1 end
+        if moved < 6 then
+          stalls = stalls + 1
+          stillSince = stillSince or os.clock()
+        else
+          stillSince = nil
+        end
+        prevX, prevY = x, y
+      end
+    end
+    local total = dist2(x0, y0, prevX, prevY)
+    local sum = 0
+    local mx = 0
+    for _, m in ipairs(samples) do sum = sum + m; if m > mx then mx = m end end
+    log(string.format("movement result: start=%s end=%s travelled=%.0f avgStep=%.1f maxStep=%.1f stalls=%d treeHits=%d",
+      fmtPos(x0, y0), fmtPos(prevX, prevY), total, #samples > 0 and (sum / #samples) or 0, mx, stalls, treeHits))
+    check("movement: hero displaced > 400u", total > 400, string.format("%.0f", total))
+    check("movement: no long stall (<= 12 of 60 samples still)", stalls <= 12, "stalls=" .. stalls)
+    check("movement: no tree-cell entry", treeHits == 0, "treeHits=" .. treeHits)
+    -- stop before the next phase so the hero does not keep walking
+    pcall(orders.stop, { identifier = "diag_stop" })
+    sleep(100)
+  end
+end
+
+-- 5. goal inside an obstacle ----------------------------------------------
+if nav and nav.dumpObstacles and entity then
+  local obs = nav.dumpObstacles(20000)
+  local trees = {}
+  for _, o in ipairs(obs) do if o.kind == "tree" then trees[#trees + 1] = o end end
+  local hx2, hy2 = heroPos()
+  local best
+  if hx2 then
+    for i = 1, #trees, math.max(1, math.floor(#trees / 400)) do
+      local t = trees[i]
+      local d = dist2(hx2, hy2, t.x, t.y)
+      if d > 300 and d < 1400 and (not best or d < best.d) then best = { t = t, d = d } end
+    end
+  end
+  if not best then
+    log("obstacle probe: no tree within 300..1400u (" .. #trees .. " trees known) — skip")
+    check("obstacle: tree data accumulated", #trees > 20, "trees=" .. #trees)
+  else
+    local t = best.t
+    local path = nav.buildPath(hx2, hy2, t.x, t.y, false)
+    local last = path[#path]
+    local snapped = last ~= nil and dist2(last.x, last.y, t.x, t.y) > 5
+    log(string.format("obstacle probe tree=%s d=%.0f waypoints=%d last=%s snapped=%s",
+      fmtPos(t.x, t.y), best.d, #path, last and fmtPos(last.x, last.y) or "none", tostring(snapped)))
+    check("obstacle: goal inside tree yields path", #path > 0, "waypoints=" .. #path)
+    if last then
+      check("obstacle: endpoint snapped out of tree", nav.isTraversable(last.x, last.y),
+        fmtPos(last.x, last.y))
+      local x0, y0 = heroPos()
+      moveOrder(last.x, last.y, "diag_obstacle")
+      local tm, movedMax = 0, 0
+      local px0, py0 = x0, y0
+      for step = 1, 30 do
+        sleep(150); tm = tm + 0.15
+        local x, y = heroPos()
+        if x then
+          local d = dist2(px0, py0, x, y)
+          if d > movedMax then movedMax = d end
+          px0, py0 = x, y
+          if dist2(x, y, last.x, last.y) < 120 then break end
+        end
+        if step == 8 and movedMax < 30 then moveOrder(last.x, last.y, "diag_obstacle_retry") end
+      end
+      local xE, yE = heroPos()
+      log(string.format("obstacle result: end=%s target=%s remaining=%.0f",
+        fmtPos(xE, yE), fmtPos(last.x, last.y), dist2(xE or 0, yE or 0, last.x, last.y)))
+      check("obstacle: hero moved toward snapped goal", movedMax > 40, string.format("%.0f", movedMax))
+      check("obstacle: hero not stuck in tree cell", nav.isTraversable(xE or 0, yE or 0) == true)
+      pcall(orders.stop, { identifier = "diag_stop2" })
+    end
+  end
+end
+
+-- 6. attack order record ---------------------------------------------------
+do
+  local hx3, hy3 = heroPos()
+  local target
+  local team
+  local okT, t = pcall(function()
+    local hero = G.Heroes.GetLocal()
+    return hero and G.Entity.GetTeamNum(hero)
+  end)
+  if okT then team = t end
+  if entity and hx3 and team then
+    local bestD
+    for idn in entity.iter() do
+      local dn = entity.designerName(idn) or ""
+      if dn:find("npc_dota_creep") or dn:find("npc_dota_neutral") then
+        local okE, alive = pcall(G.Entity.IsAlive, idn)
+        if alive and entity.team(idn) ~= team then
+          local p = G.Entity.GetAbsOrigin(idn)
+          if p and p.x then
+            local d = dist2(hx3, hy3, p.x, p.y)
+            if d < 900 and (not bestD or d < bestD.d) then bestD = { idn = idn, d = d, dn = dn } end
+          end
+        end
+      end
+    end
+    target = bestD
+  end
+  if target then
+    local idx = G.Entity.GetIndex(target.idn)
+    local okA, spec = orders.attackTarget(target.idn, { identifier = "diag_attack" })
+    log(string.format("attack probe target=%s idx=%d d=%.0f ok=%s engine=%s", target.dn,
+      idx, target.d, tostring(okA),
+      spec and spec.engine and string.format("type=%s tgt=%s", tostring(spec.engine.type),
+        tostring(spec.engine.target)) or "none"))
+    check("attack: order accepted", okA == true)
+    if spec and spec.engine then
+      check("attack: engine recorded type=4", spec.engine.type == 4, tostring(spec.engine.type))
+      check("attack: engine recorded target idx", spec.engine.target == idx,
+        string.format("%s vs %d", tostring(spec.engine.target), idx))
+    end
+    pcall(orders.stop, { identifier = "diag_stop3" })
+  else
+    log("attack probe: no enemy creep within 900u — skip")
+  end
+end
+
+-- 7. ability encoding A/B (opt-in: create D:\hake\lotus\diag_cast.txt) ------
+do
+  local probe = io.open("D:\\hake\\lotus\\diag_cast.txt", "r")
+  if not probe then
+    log("cast encoding probe: off (create D:\\hake\\lotus\\diag_cast.txt to enable)")
+  else
+    probe:close()
+    local hero = G.Heroes.GetLocal()
+    local ability
+    for i = 0, 31 do
+      local ok, a = pcall(G.NPC.GetAbilityByIndex, hero, i)
+      if ok and a then
+        local okB, beh = pcall(G.Ability.GetBehavior, a)
+        local manacost = 0
+        pcall(function() manacost = G.Ability.GetManaCost(a) or 0 end)
+        if beh and (bit.band(beh, 4) ~= 0) and (manacost or 0) > 0 then ability = a; break end
+      end
+    end
+    if not ability then
+      log("cast encoding probe: no no-target ability with mana cost on this hero — skip")
+    else
+      local aname = G.Ability.GetName(ability)
+      local mana0 = G.NPC.GetMana(hero)
+      local function castWith(mode)
+        orders.setAbilityEncoding(mode)
+        local manaB = G.NPC.GetMana(hero)
+        local okC, spec = orders.castNoTarget(ability, { identifier = "diag_cast_" .. mode })
+        sleep(350)
+        local manaA = G.NPC.GetMana(hero)
+        local cd = 0
+        pcall(function() cd = G.Ability.GetCooldown(ability) or 0 end)
+        log(string.format("cast probe mode=%s ability=%s ok=%s mana %.0f->%.0f cd=%.2f engine=%s",
+          mode, aname, tostring(okC), manaB, manaA, cd or 0,
+          spec and spec.engine and string.format("abil=%s", tostring(spec.engine.ability)) or "none"))
+        pcall(orders.stop, { identifier = "diag_cast_stop" })
+        sleep(150)
+        return (manaB - manaA) > 1 or (cd or 0) > 0
+      end
+      local entOK = castWith("entity")
+      local slotOK = false
+      if not entOK then slotOK = castWith("slot") end
+      orders.setAbilityEncoding("entity")
+      log(string.format("cast encoding verdict: entityIndex=%s slotIndex=%s",
+        tostring(entOK), tostring(slotOK)))
+      check("cast encoding: one mode works", entOK or slotOK,
+        string.format("entity=%s slot=%s", tostring(entOK), tostring(slotOK)))
+    end
+  end
+end
+
+-- 8. summary ---------------------------------------------------------------
+local pass, fail = 0, 0
+local fails = {}
+for _, r in ipairs(results) do
+  if r.ok then pass = pass + 1 else fail = fail + 1; fails[#fails + 1] = r.name end
+end
+log(string.format("SUMMARY pass=%d fail=%d%s", pass, fail,
+  fail > 0 and (" failed=[" .. table.concat(fails, "; ") .. "]") or ""))
+log(string.format("orders stats: %s purchases: %s", orders.statsLine(),
+  (function() local s = orders.purchaseStats(); return string.format("items=%d repeats=%d [%s]", s.items, s.repeats, s.detail) end)()))
+log("=== DONE ===")

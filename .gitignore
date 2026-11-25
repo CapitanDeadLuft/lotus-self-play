@@ -1,0 +1,14 @@
+# ========== ДАМПЫ ПАМЯТИ ==========
+*.dmp
+*.mdmp
+*.hdmp
+*.dump
+*.core
+dumps/
+crashdumps/
+dump/r11_stages.log
+archive/host_20261121_2205.log
+host_20261121_2205.log
+*.log
+r11_stages.log
+archive/

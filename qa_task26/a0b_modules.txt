@@ -1,0 +1,5 @@
+﻿pid=11996 modules_total=163
+d3d11.dll base=0x140705730461696 size=2506752 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\d3d11.dll
+DXGI.DLL base=0x140705772077056 size=1007616 ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\DXGI.DLL
+gameoverlayrenderer64.dll base=0x140704539672576 size=1912832 ver=11.23.65.88 path=C:\Program Files (x86)\Steam\gameoverlayrenderer64.dll
+nvwgf2umx.dll base=0x140705428537344 size=84860928 ver=32.0.15.9159 path=C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvwgf2umx.dll

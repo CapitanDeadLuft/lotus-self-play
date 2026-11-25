@@ -1,0 +1,167 @@
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   EnableRedirectToV8JsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.031 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 29
+
+Microsoft (R) Windows Debugger Version 10.0.26100.6584 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+
+Loading Dump File [D:\hake\lotus\dumps\dota2.exe.25604.dmp]
+User Mini Dump File with Full Memory: Only application data is available
+
+Symbol search path is: srv*
+Executable search path is: 
+Windows 10 Version 19045 MP (28 procs) Free x64
+Product: WinNt, suite: SingleUserTS
+Edition build lab: 19041.1.amd64fre.vb_release.191206-1406
+Debug session time: Tue Nov 17 18:14:44.000 2026 (UTC + 3:00)
+System Uptime: 0 days 10:20:49.140
+Process Uptime: 0 days 0:05:11.000
+................................................................
+................................................................
+............................................................
+Loading unloaded module list
+..................
+This dump file has an exception of interest stored in it.
+The stored exception information can be accessed via .ecxr.
+(6404.388c): Security check failure or stack buffer overrun - code c0000409 (first/second chance not available)
+Subcode: 0x2 FAST_FAIL_STACK_COOKIE_CHECK_FAILURE 
+For analysis of this file, run !analyze -v
+nvwgf2umx!NVDEV_Thunk+0x5056bd:
+00007ff8`89fabcdd cd29            int     29h
+0:055> cdb: Reading initial command 'lmv m gameoverlayrenderer64; lmv m nvwgf2umx; lmv m d3d11; lmv m dxgi; lmv m host16; q'
+start             end                 module name
+00007ff8`46ee0000 00007ff8`470b3000   gameoverlayrenderer64   (deferred)             
+    Image path: C:\Program Files (x86)\Steam\gameoverlayrenderer64.dll
+    Image name: gameoverlayrenderer64.dll
+    Timestamp:        Fri Nov 13 04:59:38 2026 (6AF66F0A)
+    CheckSum:         001A55F5
+    ImageSize:        001D3000
+    File version:     11.23.65.88
+    Product version:  1.0.0.1
+    File flags:       0 (Mask 17)
+    File OS:          4 Unknown Win32
+    File type:        2.0 Dll
+    File date:        00000000.00000000
+    Translations:     0409.04b0
+    Information from resource tables:
+        CompanyName:      Valve Corporation
+        ProductName:      Steam Game Overlay Renderer
+        InternalName:     GameOverlayRenderer (buildbot_steam-relclient-w64.build.valve.org_steam_rel_client_win64@steam-relclient-w64)
+        OriginalFilename: GameOverlayRenderer.dll
+        ProductVersion:   01.00.00.01
+        FileVersion:      11.23.65.88
+        FileDescription:  Steam Game Overlay Renderer
+        LegalCopyright:   Copyright (C) 2007
+start             end                 module name
+00007ff8`89160000 00007ff8`8e24e000   nvwgf2umx   (export symbols)       nvwgf2umx.dll
+    Loaded symbol image file: nvwgf2umx.dll
+    Image path: C:\Windows\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvwgf2umx.dll
+    Image name: nvwgf2umx.dll
+    Timestamp:        Thu Dec 11 11:40:21 2025 (693A8375)
+    CheckSum:         0518EB6F
+    ImageSize:        050EE000
+    File version:     32.0.15.9159
+    Product version:  32.0.15.9159
+    File flags:       8 (Mask 3F) Private
+    File OS:          40004 NT Win32
+    File type:        3.4 Driver
+    File date:        00000000.00000000
+    Translations:     0409.04e4
+    Information from resource tables:
+        CompanyName:      NVIDIA Corporation
+        ProductName:      NVIDIA D3D10 drivers
+        InternalName:     nvwgf2um
+        OriginalFilename: nvwgf2um.dll
+        ProductVersion:   32.0.15.9159
+        FileVersion:      32.0.15.9159
+        FileDescription:  NVIDIA D3D10 Driver, Version 591.59 
+        LegalCopyright:   (C) 2025 NVIDIA Corporation. All rights reserved.
+start             end                 module name
+00007ff8`9b150000 00007ff8`9b3b4000   d3d11      (deferred)             
+    Image path: C:\Windows\System32\d3d11.dll
+    Image name: d3d11.dll
+    Image was built with /Brepro flag.
+    Timestamp:        7D0ACBED (This is a reproducible build file hash, not a timestamp)
+    CheckSum:         0026C163
+    ImageSize:        00264000
+    File version:     10.0.19041.5794
+    Product version:  10.0.19041.5794
+    File flags:       0 (Mask 3F)
+    File OS:          40004 NT Win32
+    File type:        2.0 Dll
+    File date:        00000000.00000000
+    Translations:     0409.04b0
+    Information from resource tables:
+        CompanyName:      Microsoft Corporation
+        ProductName:      Microsoft� Windows� Operating System
+        InternalName:     D3D11.dll
+        OriginalFilename: D3D11.dll
+        ProductVersion:   10.0.19041.5794
+        FileVersion:      10.0.19041.5794 (WinBuild.160101.0800)
+        FileDescription:  Direct3D 11 Runtime
+        LegalCopyright:   � Microsoft Corporation. All rights reserved.
+start             end                 module name
+00007ff8`9d900000 00007ff8`9d9f6000   dxgi       (deferred)             
+    Image path: C:\Windows\System32\dxgi.dll
+    Image name: dxgi.dll
+    Image was built with /Brepro flag.
+    Timestamp:        23D8583F (This is a reproducible build file hash, not a timestamp)
+    CheckSum:         000FD841
+    ImageSize:        000F6000
+    File version:     10.0.19041.5794
+    Product version:  10.0.19041.5794
+    File flags:       0 (Mask 3F)
+    File OS:          40004 NT Win32
+    File type:        2.0 Dll
+    File date:        00000000.00000000
+    Translations:     0409.04b0
+    Information from resource tables:
+        CompanyName:      Microsoft Corporation
+        ProductName:      Microsoft� Windows� Operating System
+        InternalName:     dxgi.dll
+        OriginalFilename: dxgi.dll
+        ProductVersion:   10.0.19041.5794
+        FileVersion:      10.0.19041.5794 (WinBuild.160101.0800)
+        FileDescription:  DirectX Graphics Infrastructure
+        LegalCopyright:   � Microsoft Corporation. All rights reserved.
+start             end                 module name
+00007fff`e1120000 00007fff`e13e2000   host16     (deferred)             
+    Image path: D:\hake\lotus\src\host16.dll
+    Image name: host16.dll
+    Timestamp:        Mon Nov 16 02:16:39 2026 (6AFA3D57)
+    CheckSum:         00000000
+    ImageSize:        002C2000
+    Translations:     0000.04b0 0000.04e4 0409.04b0 0409.04e4
+    Information from resource tables:
+quit:
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

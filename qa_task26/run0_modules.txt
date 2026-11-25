@@ -1,0 +1,6 @@
+﻿pid=21788 start=18:24:08 responding=True
+modules_total=183
+gameoverlayrenderer64.dll ver=11.23.65.88 path=C:\Program Files (x86)\Steam\gameoverlayrenderer64.dll
+DXGI.DLL ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\DXGI.DLL
+d3d11.dll ver=10.0.19041.5794 (WinBuild.160101.0800) path=C:\WINDOWS\SYSTEM32\d3d11.dll
+nvwgf2umx.dll ver=32.0.15.9159 path=C:\WINDOWS\System32\DriverStore\FileRepository\nv_dispi.inf_amd64_4646b47d9477048e\nvwgf2umx.dll

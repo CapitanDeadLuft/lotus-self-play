@@ -1,0 +1,462 @@
+-- entity.lua — VERIFIED in-game entity reader for Dota 2 (Source 2), patch-resilient.
+-- Method: seed a CEntityIdentity from the gamerules global, walk the m_pNext linked list.
+-- Verified layout (live match, build via dota2-offset-dumper signature scan):
+--   client.dll globals: dwGamerules=0x6219008 (dumper labels it dwLocalPlayerController),
+--                       dwEntityList=0x662FFE8 (chunk bitmap head; not used here).
+--   gamerulesObj+0x08 -> C_DOTAGamerulesProxy instance; instance+0x10 -> CEntityIdentity.
+--   CEntityIdentity: +0x00 back-ptr to CEntityInstance, +0x20 designerName(char*),
+--                    +0x50 m_pPrev, +0x58 m_pNext.
+--   CEntityInstance fields via schema (m_iHealth, m_iTeamNum, ...).
+-- NOTE: global RVAs are build-specific; refresh via dota2-offset-dumper (D:\hake\lotus\dumper).
+--
+-- PERF (task-17): the identity list and the handle->identity map are now built at
+-- most once per tick (driven by M.beginTick() from the bot driver) instead of
+-- re-walking/re-building every 50 ms. If no tick driver calls beginTick(), a
+-- 50 ms wall-clock TTL keeps the old freshness guarantee. Behaviour is unchanged:
+-- same iteration order, same handle math, missing handle -> nil.
+-- Debug switches: _G.ENTITY_NO_CACHE = true  -> old per-call live walk/map rebuild
+--                 _G.ENTITY_NO_PROFILE = true -> no [entity] instrumentation lines
+local ffi = require("ffi")
+local C = ffi.C
+local schema = require("schema")
+
+local M = {}
+local clientBase, head, headAt = nil, nil, 0
+local oHealth, oTeam, oLife, oMaxHealth
+
+ffi.cdef[[
+  void* GetModuleHandleA(const char* name);
+]]
+pcall(ffi.cdef, "unsigned long long GetTickCount64(void);")
+
+-- crash guard: LuaJIT FFI derefs are NOT catchable by pcall — an unreadable
+-- pointer kills the whole game (02:29 crash: lua51!lj_cconv_ct_ct on 0x6EC).
+-- The cdef MUST match api.lua byte-for-byte: a second, different declaration of
+-- VirtualQuery re-binds the symbol and breaks api.lua's own readable().
+ffi.cdef[[
+  typedef struct { void* BaseAddress; void* AllocationBase; unsigned long AllocProtect;
+                   size_t RegionSize; unsigned long State; unsigned long Protect; unsigned long Type; } API_MBI;
+  size_t VirtualQuery(const void* addr, API_MBI* mbi, size_t len);
+]]
+local rcache = { base = 0, ends = 0 }
+local rlist, rN = {}, 0
+local RCACHE_MAX = 512   -- was 32: thrashed on scans of thousands of heap entities -> VirtualQuery per read
+local rmbi = ffi.new("API_MBI")  -- reuse: avoid a cdata alloc per VirtualQuery miss
+local function readable(addr, n)
+  if addr == nil or addr < 0x10000 or addr > 0x7FFFFFFFFFFF then return false end
+  local need = addr + (n or 8)
+  if addr >= rcache.base and need <= rcache.ends then return true end
+  for i = 1, rN do
+    local r = rlist[i]
+    if addr >= r[1] and need <= r[2] then rcache.base, rcache.ends = r[1], r[2]; return true end
+  end
+  local mbi = rmbi
+  if ffi.C.VirtualQuery(ffi.cast("void*", addr), mbi, ffi.sizeof(mbi)) == 0 then return false end
+  if tonumber(mbi.State) ~= 0x1000 then return false end
+  local prot = tonumber(mbi.Protect)
+  if not (prot == 0x02 or prot == 0x04 or prot == 0x08 or prot == 0x10 or prot == 0x20 or prot == 0x40 or prot == 0x80) then return false end
+  local b = tonumber(ffi.cast("uintptr_t", mbi.BaseAddress))
+  local e = b + tonumber(mbi.RegionSize)
+  if rN < RCACHE_MAX then rN = rN + 1; rlist[rN] = { b, e } else rlist[(rN % RCACHE_MAX) + 1] = { b, e } end
+  rcache.base, rcache.ends = b, e
+  return true
+end
+function M.clearReadCache() rcache.base, rcache.ends, rN = 0, 0, 0 end
+
+local function rq(p, off)
+  if p == nil then return nil end
+  local addr = ffi.cast("uintptr_t", p) + (off or 0)
+  if not readable(addr, 8) then return nil end
+  return tonumber(ffi.cast("uintptr_t*", addr)[0])
+end
+local function ri32(p, off)
+  if p == nil then return nil end
+  local addr = ffi.cast("uintptr_t", p) + (off or 0)
+  if addr < 0x10000 or addr > 0x7FFFFFFFFFFF then return nil end
+  return tonumber(ffi.cast("int32_t*", addr)[0])
+end
+local function cstr(p)
+  if p == nil or p < 0x10000 then return nil end
+  -- guard the FULL bounded window, not just the first byte: ffi.string copies
+  -- up to 96 bytes and a string crossing into an unmapped page AVs inside
+  -- memcpy (uncatchable by pcall). 22:50 crash class.
+  if not readable(p, 96) then return nil end
+  local ok, s = pcall(ffi.string, ffi.cast("void*", p), 96)
+  if not ok then return nil end
+  local z = s:find("\0"); if z then s = s:sub(1, z - 1) end
+  if #s > 0 and s:match("^[%w_:<>%.%s%-]+$") then return s end
+  return nil
+end
+
+local function wallMs()
+  local ok, v = pcall(C.GetTickCount64)
+  if ok and v ~= nil then return tonumber(v) or 0 end
+  return os.clock() * 1000
+end
+local function cachingEnabled() return _G.ENTITY_NO_CACHE ~= true end
+
+-- config: build-specific global RVAs (refresh with the dumper)
+M.gamerulesRVA = 0x63E30A0  -- dwLocalPlayerController, build 988312 (was 0x6219008 on 987800)
+
+local TTL = 0.05  -- fallback freshness window when no beginTick() driver exists
+local list, listGen, listAt = {}, 0, 0
+local handleMap, handleMapGen = nil, -1
+local tickDriven = false  -- set by M.beginTick(): tick owns freshness, TTL off
+-- forward-declared so M.invalidate() can clear them (defined with the name cache)
+local nameCache, nameTick = {}, 0
+
+-- instrumentation (rate-limited): one line on the first builds of a tick, then
+-- every 25th build, so QA can count builds/tick without log spam.
+local function elog(fmt, ...)
+  if _G.ENTITY_NO_PROFILE then return end
+  local f = io.open("D:\\hake\\lotus\\host.log", "a")
+  if not f then return end
+  f:write(string.format("%s [entity] " .. fmt .. "\n", os.date("%H:%M:%S"), ...))
+  f:close()
+end
+
+-- exposed counters for the loader [perf] line / tests
+M.stats = { iterBuilds = 0, handleBuilds = 0, tickBuilds = 0, lastIterMs = 0, lastHandleMs = 0 }
+
+function M.beginTick()
+  -- called once per loader.tick by the driver: force one fresh snapshot per tick
+  tickDriven = true
+  M.stats.tickBuilds = 0
+  headAt = 0      -- re-anchor the list head once per tick (old code did it every 50ms)
+  listAt = 0      -- next M.iter() rebuilds the snapshot
+  handleMapGen = -1
+end
+
+function M.invalidate()
+  -- call on match/hero change: drop snapshot + handle map + name cache and
+  -- force the next build to re-anchor the identity-list head
+  listAt = 0
+  listGen = listGen + 1  -- invalidate gen-keyed caches (local hero)
+  handleMap, handleMapGen = nil, -1
+  head, headAt = nil, 0
+  nameCache, nameTick = {}, 0
+end
+
+function M.init()
+  if not clientBase then
+    local ok, err = schema.init(); if not ok then return nil, err end
+    clientBase = ffi.cast("uintptr_t", C.GetModuleHandleA("client.dll"))
+    if clientBase == 0 then return nil, "client.dll not loaded" end
+    oHealth   = schema.offsetOf("C_BaseEntity", "m_iHealth")
+    oMaxHealth= schema.offsetOf("C_BaseEntity", "m_iMaxHealth")
+    oTeam     = schema.offsetOf("C_BaseEntity", "m_iTeamNum")
+    oLife     = schema.offsetOf("C_BaseEntity", "m_lifeState")
+    M.clientBase = clientBase
+  end
+  -- re-walk the identity list head periodically: a cached head from mid-list
+  -- misses controllers that sit before the gamerules seed.
+  local now = os.clock()
+  if head and (now - headAt) < TTL then return true end
+  local gr = rq(clientBase + M.gamerulesRVA, 0)
+  local proxy = rq(gr, 0x08)
+  local seed = rq(proxy, 0x10)
+  if not seed then return head and true or nil, "no gamerules identity seed (not in-game?)" end
+  local cur = seed
+  for _ = 1, 8192 do
+    local prev = rq(cur, 0x50)
+    if not prev or prev == 0 then break end
+    cur = prev
+  end
+  head = cur
+  headAt = now
+  return true
+end
+
+-- designer-name cache: cstr() does pcall+ffi.string+pattern match per call and
+-- this runs for every entity on every scan; caching cuts tick time massively.
+nameCache, nameTick = {}, 0
+function M.designerName(identity)
+  local now = os.clock()
+  if now - nameTick > 3 then nameCache = {}; nameTick = now end
+  local hit = nameCache[identity]
+  if hit then return hit end
+  local nm = cstr(rq(identity, 0x20))
+  if nm then nameCache[identity] = nm end
+  return nm
+end
+function M.instance(identity)
+  return rq(identity, 0x0)
+end
+
+-- snapshot builder: ONE linked-list walk per tick instead of per call
+local function buildList()
+  local t0 = os.clock()
+  local out = {}
+  local cur = head
+  local n = 0
+  while cur and cur ~= 0 and n < 16384 do
+    n = n + 1
+    out[n] = cur
+    cur = rq(cur, 0x58)
+  end
+  list, listAt, listGen = out, os.clock(), listGen + 1
+  handleMapGen = -1
+  local ms = (os.clock() - t0) * 1000
+  M.stats.iterBuilds = M.stats.iterBuilds + 1
+  M.stats.tickBuilds = M.stats.tickBuilds + 1
+  M.stats.lastIterMs = ms
+  -- instrument: first 3 builds of a tick (usually 1) + every 25th overall;
+  -- an empty list (lobby / not in game) is not worth a line
+  if n > 0 and (M.stats.tickBuilds <= 3 or M.stats.iterBuilds % 25 == 0) then
+    elog("iter build ms=%.2f n=%d tickBuilds=%d total=%d cached=0", ms, n, M.stats.tickBuilds, M.stats.iterBuilds)
+  end
+  return n, ms
+end
+
+local function ensureList()
+  local now = os.clock()
+  local stale = (listAt == 0) or (not tickDriven and (now - listAt) >= TTL)
+  if stale then
+    -- beginTick() sets headAt = 0 to force a re-anchor; the old condition only
+    -- re-ran init() when head was nil, so a head that had drifted (entities
+    -- destroyed / list relinked by the game) produced iter() counts of 1..4
+    -- instead of ~5700 (live 2026-11-20: NPCs.GetAll alternated 0/148).
+    if (not head) or headAt == 0 or (not tickDriven and (now - headAt) >= TTL) then M.init() end
+    buildList()
+  end
+end
+
+-- iterator over identities (snapshot of the linked list for this tick).
+function M.iter()
+  if not cachingEnabled() then
+    -- legacy path: live walk per call (debug / correctness A-B switch)
+    if not head or (os.clock() - headAt) >= TTL then M.init() end
+    local cur = head
+    local n = 0
+    return function()
+      while cur and cur ~= 0 and n < 16384 do
+        local idn = cur
+        cur = rq(cur, 0x58)
+        n = n + 1
+        return idn
+      end
+      return nil
+    end
+  end
+  ensureList()
+  local i = 0
+  local snapshot = list
+  return function()
+    i = i + 1
+    return snapshot[i]
+  end
+end
+
+-- schema offset cache: M.field is called per entity per scan
+local offCache = {}
+function M.field(identity, cls, name)
+  local inst = M.instance(identity)
+  if not inst then return nil end
+  local t = offCache[cls]
+  if not t then t = {}; offCache[cls] = t end
+  local off = t[name]
+  if off == nil then
+    local v = schema.offsetOf(cls, name)
+    off = v or false
+    t[name] = off
+  end
+  if off == false then return nil end
+  return ri32(inst, off)
+end
+
+function M.health(identity)  return M.field(identity, "C_BaseEntity", "m_iHealth") end
+function M.maxHealth(identity) return M.field(identity, "C_BaseEntity", "m_iMaxHealth") end
+function M.team(identity)    return M.field(identity, "C_BaseEntity", "m_iTeamNum") end
+
+-- collect all entities matching a designer-name pattern (e.g. "npc_dota_hero")
+function M.findAll(pattern)
+  local out = {}
+  for idn in M.iter() do
+    local dn = M.designerName(idn)
+    if dn and dn:find(pattern) then
+      out[#out+1] = { identity = idn, instance = M.instance(idn), name = dn,
+                      health = M.health(idn), team = M.team(idn) }
+    end
+  end
+  return out
+end
+
+function M.getHeroes() return M.findAll("npc_dota_hero_") end
+
+-- local player's hero: assigned-hero handle first, playerID match as fallback.
+local function ru8(inst, off)
+  if not inst then return nil end
+  local a = inst + off
+  if a < 0x10000 or a > 0x7FFFFFFFFFFF then return nil end
+  if not readable(a, 1) then return nil end
+  return tonumber(ffi.cast("uint8_t*", a)[0])
+end
+
+local function buildHandleMap()
+  local t0 = os.clock()
+  local map = {}
+  local snapshot = list
+  for i = 1, #snapshot do
+    local idn = snapshot[i]
+    local h = ri32(idn, 0x10)
+    if h then
+      if h < 0 then h = h + 4294967296 end
+      map[h % 0x8000] = idn
+    end
+  end
+  handleMap, handleMapGen = map, listGen
+  local ms = (os.clock() - t0) * 1000
+  M.stats.handleBuilds = M.stats.handleBuilds + 1
+  M.stats.tickBuilds = M.stats.tickBuilds + 1
+  M.stats.lastHandleMs = ms
+  if M.stats.tickBuilds <= 3 or M.stats.handleBuilds % 25 == 0 then
+    elog("byHandle build ms=%.2f n=%d tickBuilds=%d total=%d", ms, #snapshot, M.stats.tickBuilds, M.stats.handleBuilds)
+  end
+end
+
+function M.byHandle(handle)
+  if not handle then return nil end
+  if handle < 0 then handle = handle + 4294967296 end
+  if handle == 0 or handle == 0xFFFFFFFF then return nil end
+  local idx = handle % 0x8000
+  if idx == 0 then return nil end
+  if not cachingEnabled() then
+    -- legacy path: live walk + 50 ms rebuild-on-demand map (A/B debug switch)
+    local now = os.clock()
+    if not handleMap or now - (M._legacyAt or 0) > TTL then
+      M._legacyAt = now
+      local map = {}
+      for idn in M.iter() do
+        local h = ri32(idn, 0x10)
+        if h then
+          if h < 0 then h = h + 4294967296 end
+          map[h % 0x8000] = idn
+        end
+      end
+      handleMap = map
+    end
+    return handleMap[idx]
+  end
+  ensureList()
+  if handleMapGen ~= listGen then buildHandleMap() end
+  return handleMap[idx]
+end
+
+local function heroRecord(idn, pid)
+  return { identity = idn, instance = M.instance(idn), name = M.designerName(idn),
+           health = M.health(idn), team = M.team(idn), playerID = pid }
+end
+
+local function isHeroName(dn)
+  return dn and dn:find("npc_dota_hero_") and not dn:find("announcer")
+end
+
+-- local hero: cached per snapshot generation (identity+pid only; the record is
+-- rebuilt each call so health/team stay live). A new tick/match rebuilds the
+-- snapshot and therefore re-scans once per tick, never across matches.
+local localHeroId, localHeroPid, localHeroGen = nil, nil, -1
+function M.getLocalHero()
+  if cachingEnabled() and localHeroId and localHeroGen == listGen and listAt ~= 0 then
+    local dn = M.designerName(localHeroId)
+    if dn and isHeroName(dn) and M.instance(localHeroId) then
+      return heroRecord(localHeroId, localHeroPid)
+    end
+    localHeroId, localHeroGen = nil, -1  -- stale pointer: full rescan
+  end
+  headAt = 0
+  local ok = M.init(); if not ok then return nil end
+  local oIsLocal = schema.offsetOf("CBasePlayerController", "m_bIsLocalPlayerController")
+  local oCtrlPID = schema.offsetOf("C_DOTAPlayerController", "m_nPlayerID")
+  local oHeroPID = schema.offsetOf("C_DOTA_BaseNPC_Hero", "m_iPlayerID")
+  local oAssigned = schema.offsetOf("C_DOTAPlayerController", "m_hAssignedHero") or 2324
+  local oPawn = schema.offsetOf("CBasePlayerController", "m_hPawn") or 1700
+  if not oIsLocal then return nil end
+  local localPID
+  for idn in M.iter() do
+    local dn = M.designerName(idn)
+    if dn and dn:find("player_controller") then
+      local inst = M.instance(idn)
+      if ru8(inst, oIsLocal) == 1 then
+        if localPID == nil and oCtrlPID then localPID = ri32(inst, oCtrlPID) end
+        local assigned = M.byHandle(ri32(inst, oAssigned)) or M.byHandle(ri32(inst, oPawn))
+        if assigned and isHeroName(M.designerName(assigned)) then
+          if localHeroId and localHeroId ~= assigned then M.invalidate() end
+          localHeroId, localHeroPid, localHeroGen = assigned, localPID, listGen
+          return heroRecord(assigned, localPID)
+        end
+      end
+    end
+  end
+  if localPID == nil or not oHeroPID then return nil end
+  for idn in M.iter() do
+    local dn = M.designerName(idn)
+    if isHeroName(dn) and ri32(M.instance(idn), oHeroPID) == localPID then
+      if localHeroId and localHeroId ~= idn then M.invalidate() end
+      localHeroId, localHeroPid, localHeroGen = idn, localPID, listGen
+      return heroRecord(idn, localPID)
+    end
+  end
+  return nil
+end
+
+-- diag: expose list/head state so a live probe can tell WHY enumeration is empty
+function M.debugStats()
+  local headNum = 0
+  if head then headNum = tonumber(head) or 0 end
+  return {
+    head = headNum,
+    headAt = tonumber(headAt) or 0,
+    list = #list,
+    listAt = tonumber(listAt) or 0,
+    tickDriven = tickDriven and true or false,
+    caching = cachingEnabled() and true or false,
+    stats = M.stats,
+  }
+end
+
+-- diag: scan an identity object for pointers to "npc_*" strings, to re-derive
+-- the designer-name offset after a game update (the old 0x20 is a candidate).
+function M.debugStrings(identity, maxOff, step)
+  local out = {}
+  if not identity then return out end
+  maxOff = maxOff or 0x200
+  step = step or 8
+  for off = 0, maxOff, step do
+    local p = rq(identity, off)
+    local s = cstr(p)
+    if s and s:find("^npc_") then out[#out + 1] = { off = off, s = s } end
+  end
+  return out
+end
+
+-- diag: how many entities in the current snapshot expose a readable designer name
+function M.debugNames(limit)
+  limit = limit or 8
+  local out = { total = 0, named = 0, npc = 0, sample = {} }
+  ensureList()
+  for _, idn in ipairs(list) do
+    out.total = out.total + 1
+    local nm = M.designerName(idn)
+    if nm then
+      out.named = out.named + 1
+      if nm:find("npc_") then out.npc = out.npc + 1 end
+      if #out.sample < limit then out.sample[#out.sample + 1] = { name = nm, idn = idn } end
+    elseif #out.sample < limit then
+      out.sample[#out.sample + 1] = { name = "?", idn = idn }
+    end
+  end
+  return out
+end
+
+-- diag: expose the identity-list seed and raw reads for offset re-derivation
+function M.debugSeed()
+  if not clientBase then M.init() end
+  local gr = rq(clientBase + M.gamerulesRVA, 0)
+  local proxy = gr and rq(gr, 0x08) or 0
+  local seed = proxy and rq(proxy, 0x10) or 0
+  return { client = clientBase, gr = gr, proxy = proxy, seed = seed }
+end
+function M.debugReadQ(p, off) return rq(p, off) end
+function M.debugCStr(p) return cstr(p) end
+
+return M

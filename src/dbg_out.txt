@@ -1,0 +1,2 @@
+1: before require
+2: proc loaded

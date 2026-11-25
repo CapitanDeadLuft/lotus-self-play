@@ -1,0 +1,220 @@
+
+************* Preparing the environment for Debugger Extensions Gallery repositories **************
+   ExtensionRepository : Implicit
+   UseExperimentalFeatureForNugetShare : true
+   AllowNugetExeUpdate : true
+   NonInteractiveNuget : true
+   AllowNugetMSCredentialProviderInstall : true
+   AllowParallelInitializationOfLocalRepositories : true
+
+   EnableRedirectToV8JsProvider : false
+
+   -- Configuring repositories
+      ----> Repository : LocalInstalled, Enabled: true
+      ----> Repository : UserExtensions, Enabled: true
+
+>>>>>>>>>>>>> Preparing the environment for Debugger Extensions Gallery repositories completed, duration 0.000 seconds
+
+************* Waiting for Debugger Extensions Gallery to Initialize **************
+
+>>>>>>>>>>>>> Waiting for Debugger Extensions Gallery to Initialize completed, duration 0.032 seconds
+   ----> Repository : UserExtensions, Enabled: true, Packages count: 0
+   ----> Repository : LocalInstalled, Enabled: true, Packages count: 29
+
+Microsoft (R) Windows Debugger Version 10.0.26100.6584 AMD64
+Copyright (c) Microsoft Corporation. All rights reserved.
+
+
+Loading Dump File [D:\hake\lotus\dumps\dota2.exe.26884.dmp]
+User Mini Dump File with Full Memory: Only application data is available
+
+
+************* Path validation summary **************
+Response                         Time (ms)     Location
+OK                                             D:\hake\lotus\src
+Deferred                                       srv*
+Symbol search path is: D:\hake\lotus\src;srv*
+Executable search path is: 
+Windows 10 Version 19045 MP (28 procs) Free x64
+Product: WinNt, suite: SingleUserTS
+Edition build lab: 19041.1.amd64fre.vb_release.191206-1406
+Debug session time: Wed Nov 18 00:52:34.000 2026 (UTC + 3:00)
+System Uptime: 0 days 16:58:41.289
+Process Uptime: 0 days 0:05:49.000
+................................................................
+................................................................
+............................................................
+Loading unloaded module list
+.................
+This dump file has an exception of interest stored in it.
+The stored exception information can be accessed via .ecxr.
+(6904.4c3c): Security check failure or stack buffer overrun - code c0000409 (first/second chance not available)
+Subcode: 0x2 FAST_FAIL_STACK_COOKIE_CHECK_FAILURE 
+For analysis of this file, run !analyze -v
+*** WARNING: Unable to verify checksum for host16.dll
+host16!__report_gsfailure+0x1d:
+00007ff8`2f754f79 cd29            int     29h
+0:055> cdb: Reading initial command '.reload; u 00007fffdc84f860 L90; q'
+................................................................
+................................................................
+........................................................*** WARNING: Unable to verify checksum for host16.dll
+....
+Loading unloaded module list
+.................
+client!ExtractModuleMetadata+0x16b790:
+00007fff`dc84f860 150b220b02      adc     eax,20B220Bh
+00007fff`dc84f865 488bd8          mov     rbx,rax
+00007fff`dc84f868 4885c0          test    rax,rax
+00007fff`dc84f86b 7432            je      client!ExtractModuleMetadata+0x16b7cf (00007fff`dc84f89f)
+00007fff`dc84f86d 0f1f00          nop     dword ptr [rax]
+00007fff`dc84f870 488bcb          mov     rcx,rbx
+00007fff`dc84f873 ff1527220b02    call    qword ptr [client!InstallSchemaBindings+0x10ad70 (00007fff`de901aa0)]
+00007fff`dc84f879 4885c0          test    rax,rax
+00007fff`dc84f87c 7410            je      client!ExtractModuleMetadata+0x16b7be (00007fff`dc84f88e)
+00007fff`dc84f87e 803800          cmp     byte ptr [rax],0
+00007fff`dc84f881 740b            je      client!ExtractModuleMetadata+0x16b7be (00007fff`dc84f88e)
+00007fff`dc84f883 488bd7          mov     rdx,rdi
+00007fff`dc84f886 488bc8          mov     rcx,rax
+00007fff`dc84f889 e89254e5ff      call    client+0x19b4d20 (00007fff`dc6a4d20)
+00007fff`dc84f88e 488bcb          mov     rcx,rbx
+00007fff`dc84f891 ff15d1210b02    call    qword ptr [client!InstallSchemaBindings+0x10ad38 (00007fff`de901a68)]
+00007fff`dc84f897 488bd8          mov     rbx,rax
+00007fff`dc84f89a 4885c0          test    rax,rax
+00007fff`dc84f89d 75d1            jne     client!ExtractModuleMetadata+0x16b7a0 (00007fff`dc84f870)
+00007fff`dc84f89f ba02000000      mov     edx,2
+00007fff`dc84f8a4 b901000000      mov     ecx,1
+00007fff`dc84f8a9 e85245a3ff      call    client+0x1593e00 (00007fff`dc283e00)
+00007fff`dc84f8ae 488bc8          mov     rcx,rax
+00007fff`dc84f8b1 488bd7          mov     rdx,rdi
+00007fff`dc84f8b4 e86754e5ff      call    client+0x19b4d20 (00007fff`dc6a4d20)
+00007fff`dc84f8b9 ba03000000      mov     edx,3
+00007fff`dc84f8be b901000000      mov     ecx,1
+00007fff`dc84f8c3 e83845a3ff      call    client+0x1593e00 (00007fff`dc283e00)
+00007fff`dc84f8c8 488bc8          mov     rcx,rax
+00007fff`dc84f8cb 488bd7          mov     rdx,rdi
+00007fff`dc84f8ce 488b5c2450      mov     rbx,qword ptr [rsp+50h]
+00007fff`dc84f8d3 488b742458      mov     rsi,qword ptr [rsp+58h]
+00007fff`dc84f8d8 4883c430        add     rsp,30h
+00007fff`dc84f8dc 5f              pop     rdi
+00007fff`dc84f8dd e93e54e5ff      jmp     client+0x19b4d20 (00007fff`dc6a4d20)
+00007fff`dc84f8e2 cc              int     3
+00007fff`dc84f8e3 cc              int     3
+00007fff`dc84f8e4 cc              int     3
+00007fff`dc84f8e5 cc              int     3
+00007fff`dc84f8e6 cc              int     3
+00007fff`dc84f8e7 cc              int     3
+00007fff`dc84f8e8 cc              int     3
+00007fff`dc84f8e9 cc              int     3
+00007fff`dc84f8ea cc              int     3
+00007fff`dc84f8eb cc              int     3
+00007fff`dc84f8ec cc              int     3
+00007fff`dc84f8ed cc              int     3
+00007fff`dc84f8ee cc              int     3
+00007fff`dc84f8ef cc              int     3
+00007fff`dc84f8f0 48895c2408      mov     qword ptr [rsp+8],rbx
+00007fff`dc84f8f5 4889742418      mov     qword ptr [rsp+18h],rsi
+00007fff`dc84f8fa 57              push    rdi
+00007fff`dc84f8fb 4883ec60        sub     rsp,60h
+00007fff`dc84f8ff 410fb6f1        movzx   esi,r9b
+00007fff`dc84f903 418bd8          mov     ebx,r8d
+00007fff`dc84f906 4c8bc2          mov     r8,rdx
+00007fff`dc84f909 488bf9          mov     rdi,rcx
+00007fff`dc84f90c 4885d2          test    rdx,rdx
+00007fff`dc84f90f 747d            je      client!ExtractModuleMetadata+0x16b8be (00007fff`dc84f98e)
+00007fff`dc84f911 8b8110090000    mov     eax,dword ptr [rcx+910h]
+00007fff`dc84f917 39822c070000    cmp     dword ptr [rdx+72Ch],eax
+00007fff`dc84f91d 756f            jne     client!ExtractModuleMetadata+0x16b8be (00007fff`dc84f98e)
+00007fff`dc84f91f 488d542478      lea     rdx,[rsp+78h]
+00007fff`dc84f924 498bc8          mov     rcx,r8
+00007fff`dc84f927 e83437b501      call    client!ExtractModuleMetadata+0x1cbef90 (00007fff`de3a3060)
+00007fff`dc84f92c 8b05065d1002    mov     eax,dword ptr [client!InstallSchemaBindings+0x15e908 (00007fff`de955638)]
+00007fff`dc84f932 448d041b        lea     r8d,[rbx+rbx]
+00007fff`dc84f936 f20f1005f25c1002 movsd   xmm0,mmword ptr [client!InstallSchemaBindings+0x15e900 (00007fff`de955630)]
+00007fff`dc84f93e 4c8d4c2450      lea     r9,[rsp+50h]
+00007fff`dc84f943 c644244001      mov     byte ptr [rsp+40h],1
+00007fff`dc84f948 440bc6          or      r8d,esi
+00007fff`dc84f94b 89442458        mov     dword ptr [rsp+58h],eax
+00007fff`dc84f94f ba24000000      mov     edx,24h
+00007fff`dc84f954 33c0            xor     eax,eax
+00007fff`dc84f956 f20f11442450    movsd   mmword ptr [rsp+50h],xmm0
+00007fff`dc84f95c 89442438        mov     dword ptr [rsp+38h],eax
+00007fff`dc84f960 488bcf          mov     rcx,rdi
+00007fff`dc84f963 4889442430      mov     qword ptr [rsp+30h],rax
+00007fff`dc84f968 89442428        mov     dword ptr [rsp+28h],eax
+00007fff`dc84f96c 8b442478        mov     eax,dword ptr [rsp+78h]
+00007fff`dc84f970 89442420        mov     dword ptr [rsp+20h],eax
+00007fff`dc84f974 e837000000      call    client!ExtractModuleMetadata+0x16b8e0 (00007fff`dc84f9b0)
+00007fff`dc84f979 b001            mov     al,1
+00007fff`dc84f97b 488b5c2470      mov     rbx,qword ptr [rsp+70h]
+00007fff`dc84f980 488bb42480000000 mov     rsi,qword ptr [rsp+80h]
+00007fff`dc84f988 4883c460        add     rsp,60h
+00007fff`dc84f98c 5f              pop     rdi
+00007fff`dc84f98d c3              ret
+00007fff`dc84f98e 488b5c2470      mov     rbx,qword ptr [rsp+70h]
+00007fff`dc84f993 32c0            xor     al,al
+00007fff`dc84f995 488bb42480000000 mov     rsi,qword ptr [rsp+80h]
+00007fff`dc84f99d 4883c460        add     rsp,60h
+00007fff`dc84f9a1 5f              pop     rdi
+00007fff`dc84f9a2 c3              ret
+00007fff`dc84f9a3 cc              int     3
+00007fff`dc84f9a4 cc              int     3
+00007fff`dc84f9a5 cc              int     3
+00007fff`dc84f9a6 cc              int     3
+00007fff`dc84f9a7 cc              int     3
+00007fff`dc84f9a8 cc              int     3
+00007fff`dc84f9a9 cc              int     3
+00007fff`dc84f9aa cc              int     3
+00007fff`dc84f9ab cc              int     3
+00007fff`dc84f9ac cc              int     3
+00007fff`dc84f9ad cc              int     3
+00007fff`dc84f9ae cc              int     3
+00007fff`dc84f9af cc              int     3
+00007fff`dc84f9b0 4c894c2420      mov     qword ptr [rsp+20h],r9
+00007fff`dc84f9b5 4489442418      mov     dword ptr [rsp+18h],r8d
+00007fff`dc84f9ba 89542410        mov     dword ptr [rsp+10h],edx
+00007fff`dc84f9be 48894c2408      mov     qword ptr [rsp+8],rcx
+00007fff`dc84f9c3 55              push    rbp
+00007fff`dc84f9c4 53              push    rbx
+00007fff`dc84f9c5 56              push    rsi
+00007fff`dc84f9c6 57              push    rdi
+00007fff`dc84f9c7 4156            push    r14
+00007fff`dc84f9c9 488d6c24e0      lea     rbp,[rsp-20h]
+00007fff`dc84f9ce 4881ec20010000  sub     rsp,120h
+00007fff`dc84f9d5 488bb580000000  mov     rsi,qword ptr [rbp+80h]
+00007fff`dc84f9dc 4c8bf1          mov     r14,rcx
+00007fff`dc84f9df 488b0d22966b04  mov     rcx,qword ptr [client!InstallSchemaBindings+0x27122d8 (00007fff`e0f09008)]
+00007fff`dc84f9e6 33ff            xor     edi,edi
+00007fff`dc84f9e8 498bd9          mov     rbx,r9
+00007fff`dc84f9eb 4885c9          test    rcx,rcx
+00007fff`dc84f9ee 0f8471010000    je      client!ExtractModuleMetadata+0x16ba95 (00007fff`dc84fb65)
+00007fff`dc84f9f4 e82702a3ff      call    client+0x158fc20 (00007fff`dc27fc20)
+00007fff`dc84f9f9 4885c0          test    rax,rax
+00007fff`dc84f9fc 0f8463010000    je      client!ExtractModuleMetadata+0x16ba95 (00007fff`dc84fb65)
+00007fff`dc84fa02 488b0dff956b04  mov     rcx,qword ptr [client!InstallSchemaBindings+0x27122d8 (00007fff`e0f09008)]
+00007fff`dc84fa09 e81202a3ff      call    client+0x158fc20 (00007fff`dc27fc20)
+00007fff`dc84fa0e 488bc8          mov     rcx,rax
+00007fff`dc84fa11 488b10          mov     rdx,qword ptr [rax]
+00007fff`dc84fa14 ff9220070000    call    qword ptr [rdx+720h]
+00007fff`dc84fa1a 84c0            test    al,al
+00007fff`dc84fa1c 745e            je      client!ExtractModuleMetadata+0x16b9ac (00007fff`dc84fa7c)
+00007fff`dc84fa1e 488b0de3956b04  mov     rcx,qword ptr [client!InstallSchemaBindings+0x27122d8 (00007fff`e0f09008)]
+00007fff`dc84fa25 e8f601a3ff      call    client+0x158fc20 (00007fff`dc27fc20)
+00007fff`dc84fa2a 4c8bcb          mov     r9,rbx
+00007fff`dc84fa2d 4c8d4560        lea     r8,[rbp+60h]
+00007fff`dc84fa31 488d5558        lea     rdx,[rbp+58h]
+00007fff`dc84fa35 488b08          mov     rcx,qword ptr [rax]
+00007fff`dc84fa38 4c8b9128070000  mov     r10,qword ptr [rcx+728h]
+00007fff`dc84fa3f 488d8d90000000  lea     rcx,[rbp+90h]
+00007fff`dc84fa46 48894c2440      mov     qword ptr [rsp+40h],rcx
+quit:
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\atlmfc.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\ObjectiveC.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\concurrency.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\cpp_rest.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\stl.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Data.Json.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Geolocation.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Devices.Sensors.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\Windows.Media.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\windows.natvis'
+NatVis script unloaded from 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\Visualizers\winrt.natvis'

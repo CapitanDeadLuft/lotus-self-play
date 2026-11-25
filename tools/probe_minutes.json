@@ -1,0 +1,96 @@
+{
+ "match1": [
+  {
+   "calls": 442,
+   "seen": 2582,
+   "chk": 95,
+   "gate": 430,
+   "denyNo": 1926,
+   "cands": 16,
+   "chosen": 14
+  },
+  {
+   "calls": 195,
+   "seen": 1396,
+   "chk": 178,
+   "gate": 582,
+   "denyNo": 620,
+   "cands": 32,
+   "chosen": 32
+  },
+  {
+   "calls": 152,
+   "seen": 1122,
+   "chk": 71,
+   "gate": 550,
+   "denyNo": 486,
+   "cands": 7,
+   "chosen": 7
+  },
+  {
+   "calls": 109,
+   "seen": 783,
+   "chk": 45,
+   "gate": 236,
+   "denyNo": 480,
+   "cands": 7,
+   "chosen": 7
+  },
+  {
+   "calls": 133,
+   "seen": 985,
+   "chk": 78,
+   "gate": 368,
+   "denyNo": 532,
+   "cands": 1,
+   "chosen": 1
+  }
+ ],
+ "match3": [
+  {
+   "calls": 423,
+   "seen": 2278,
+   "chk": 87,
+   "gate": 260,
+   "denyNo": 1816,
+   "cands": 9,
+   "chosen": 9
+  },
+  {
+   "calls": 170,
+   "seen": 1267,
+   "chk": 79,
+   "gate": 576,
+   "denyNo": 524,
+   "cands": 4,
+   "chosen": 4
+  },
+  {
+   "calls": 138,
+   "seen": 974,
+   "chk": 90,
+   "gate": 443,
+   "denyNo": 408,
+   "cands": 5,
+   "chosen": 5
+  },
+  {
+   "calls": 108,
+   "seen": 934,
+   "chk": 56,
+   "gate": 279,
+   "denyNo": 570,
+   "cands": 11,
+   "chosen": 9
+  },
+  {
+   "calls": 132,
+   "seen": 921,
+   "chk": 205,
+   "gate": 181,
+   "denyNo": 496,
+   "cands": 0,
+   "chosen": 0
+  }
+ ]
+}
